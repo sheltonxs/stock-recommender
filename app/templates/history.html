@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+{% block title %}历史推荐 - A股智选{% endblock %}
+{% block nav_history %}navbar__link--active{% endblock %}
+
+{% block extra_style %}
+<style>
+  .metric-card { padding: 20px 24px; }
+  .metric-card__label {
+    font: 500 13px var(--font-ui);
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .metric-card__label svg { width: 15px; height: 15px; opacity: 0.6; }
+  .metric-card__value {
+    font: 700 28px var(--font-data);
+    line-height: 1.2;
+  }
+  .metric-card__sub {
+    font: 400 12px var(--font-ui);
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+  .chart-card {
+    padding: 20px;
+  }
+  .chart-card__title {
+    font: 600 14px var(--font-ui);
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .chart-card__title svg { width: 16px; height: 16px; opacity: 0.6; }
+  .status-cell { text-align: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Section 1: Summary Cards -->
+<section class="section">
+  <div class="section__header">
+    <div class="section__title"><i data-lucide="history"></i> 历史推荐总览</div>
+  </div>
+  <div class="grid-4">
+    <!-- Average Win Rate -->
+    <div class="card metric-card">
+      <div class="metric-card__label"><i data-lucide="target"></i> 平均胜率</div>
+      <div class="metric-card__value up">
+        {% if history_data %}
+          {{ "%.1f"|format(history_data|map(attribute='win_rate')|list|sum / history_data|length) }}%
+        {% else %}
+          --
+        {% endif %}
+      </div>
+      <div class="metric-card__sub">基于 {{ history_data|length }} 个交易日</div>
+    </div>
+    <!-- Average Return -->
+    <div class="card metric-card">
+      <div class="metric-card__label"><i data-lucide="trending-up"></i> 平均收益</div>
+      <div class="metric-card__value accent">
+        {% if history_data %}
+          {{ "%.2f"|format(history_data|map(attribute='avg_return')|list|sum / history_data|length) }}%
+        {% else %}
+          --
+        {% endif %}
+      </div>
+      <div class="metric-card__sub">推荐股票平均次日收益</div>
+    </div>
+    <!-- Best Single Day -->
+    <div class="card metric-card">
+      <div class="metric-card__label"><i data-lucide="zap"></i> 最佳单日</div>
+      <div class="metric-card__value up">
+        {% if history_data %}
+          +{{ "%.2f"|format(history_data|map(attribute='top_return')|list|max) }}%
+        {% else %}
+          --
+        {% endif %}
+      </div>
+      <div class="metric-card__sub">单只股票最高次日收益</div>
+    </div>
+    <!-- Total Days -->
+    <div class="card metric-card">
+      <div class="metric-card__label"><i data-lucide="calendar-days"></i> 推荐天数</div>
+      <div class="metric-card__value" style="color: var(--color-primary);">
+        {{ history_data|length }}
+      </div>
+      <div class="metric-card__sub">累计推荐交易日数</div>
+    </div>
+  </div>
+</section>
+
+<!-- Section 2: Win Rate Trend Chart -->
+<section class="section">
+  <div class="card chart-card">
+    <div class="chart-card__title"><i data-lucide="line-chart"></i> 胜率与收益趋势</div>
+    <div id="winRateChart" style="width:100%;height:320px;"></div>
+  </div>
+</section>
+
+<!-- Section 3: Score Distribution Chart -->
+<section class="section">
+  <div class="card chart-card">
+    <div class="chart-card__title"><i data-lucide="bar-chart-3"></i> 推荐评分分布</div>
+    <div id="scoreDistChart" style="width:100%;height:280px;"></div>
+  </div>
+</section>
+
+<!-- Section 4: Historical Records Table -->
+<section class="section">
+  <div class="card" style="padding:0; overflow:hidden;">
+    <div style="padding:20px 20px 0;">
+      <div class="section__title"><i data-lucide="table-2"></i> 历史推荐记录</div>
+    </div>
+    <div style="overflow-x:auto;">
+      <table class="rec-table">
+        <thead>
+          <tr>
+            <th>日期</th>
+            <th style="text-align:center">推荐数</th>
+            <th style="text-align:center">胜率</th>
+            <th style="text-align:center">平均收益</th>
+            <th style="text-align:center">最佳收益</th>
+            <th style="text-align:center">状态</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for day in history_data %}
+          <tr>
+            <td style="font:500 14px var(--font-data); color:var(--text-primary);">{{ day.date }}</td>
+            <td style="text-align:center; font:400 14px var(--font-data); color:var(--text-secondary);">
+              {{ day.total_recommended }}
+            </td>
+            <td style="text-align:center;">
+              <span class="{% if day.win_rate >= 65 %}up{% elif day.win_rate >= 55 %}accent{% else %}down{% endif %}"
+                    style="font:600 14px var(--font-data);">
+                {{ "%.1f"|format(day.win_rate) }}%
+              </span>
+            </td>
+            <td style="text-align:center;">
+              <span class="{{ 'up' if day.avg_return > 0 else 'down' if day.avg_return < 0 else 'flat' }}"
+                    style="font:500 14px var(--font-data);">
+                {{ "+" if day.avg_return > 0 else "" }}{{ "%.2f"|format(day.avg_return) }}%
+              </span>
+            </td>
+            <td style="text-align:center;">
+              <span class="up" style="font:500 14px var(--font-data);">
+                +{{ "%.2f"|format(day.top_return) }}%
+              </span>
+            </td>
+            <td class="status-cell">
+              {% if day.win_rate >= 60 %}
+                <span class="score-badge score-badge--bullish">优秀</span>
+              {% elif day.win_rate >= 50 %}
+                <span class="score-badge score-badge--neutral">一般</span>
+              {% else %}
+                <span class="score-badge score-badge--bearish">待改进</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% if not history_data %}
+          <tr>
+            <td colspan="6" style="text-align:center; padding:40px 0; color:var(--text-muted); font:400 14px var(--font-ui);">
+              暂无历史推荐数据
+            </td>
+          </tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  // --- Data from Jinja ---
+  const historyDates = {{ history_data|map(attribute='date')|list|tojson|safe }};
+  const winRates = {{ history_data|map(attribute='win_rate')|list|tojson|safe }};
+  const avgReturns = {{ history_data|map(attribute='avg_return')|list|tojson|safe }};
+
+  // ===== Win Rate & Return Trend Chart =====
+  const winRateChart = echarts.init(document.getElementById('winRateChart'));
+  winRateChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1F2937',
+      borderColor: 'rgba(255,255,255,0.1)',
+      textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 13 },
+      axisPointer: { type: 'cross', crossStyle: { color: '#374151' } }
+    },
+    legend: {
+      data: ['胜率', '平均收益'],
+      textStyle: { color: '#94A3B8', fontFamily: "'Fira Sans', sans-serif", fontSize: 12 },
+      top: 0,
+      right: 0
+    },
+    grid: {
+      top: 36, left: 50, right: 56, bottom: 28
+    },
+    xAxis: {
+      type: 'category',
+      data: historyDates,
+      axisLine: { lineStyle: { color: '#374151' } },
+      axisLabel: {
+        color: '#64748B',
+        fontFamily: "'Fira Code', monospace",
+        fontSize: 11,
+        rotate: historyDates.length > 15 ? 30 : 0
+      },
+      axisTick: { show: false }
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: '胜率(%)',
+        nameTextStyle: { color: '#64748B', fontSize: 11 },
+        axisLine: { show: false },
+        axisLabel: {
+          color: '#64748B',
+          fontFamily: "'Fira Code', monospace",
+          fontSize: 11,
+          formatter: '{value}%'
+        },
+        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+      },
+      {
+        type: 'value',
+        name: '收益(%)',
+        nameTextStyle: { color: '#64748B', fontSize: 11 },
+        axisLine: { show: false },
+        axisLabel: {
+          color: '#64748B',
+          fontFamily: "'Fira Code', monospace",
+          fontSize: 11,
+          formatter: '{value}%'
+        },
+        splitLine: { show: false }
+      }
+    ],
+    series: [
+      {
+        name: '胜率',
+        type: 'line',
+        yAxisIndex: 0,
+        data: winRates,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: '#3B82F6', width: 2 },
+        itemStyle: { color: '#3B82F6' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(59,130,246,0.10)' },
+            { offset: 1, color: 'rgba(59,130,246,0.01)' }
+          ])
+        }
+      },
+      {
+        name: '平均收益',
+        type: 'line',
+        yAxisIndex: 1,
+        data: avgReturns,
+        smooth: true,
+        symbol: 'diamond',
+        symbolSize: 6,
+        lineStyle: { color: '#F59E0B', width: 2 },
+        itemStyle: { color: '#F59E0B' }
+      }
+    ]
+  });
+
+  // ===== Score Distribution Chart =====
+  const scoreDistChart = echarts.init(document.getElementById('scoreDistChart'));
+  const scoreBins = ['90-100', '80-89', '70-79', '60-69', '50-59', '<50'];
+  const scoreCounts = [3, 12, 25, 30, 20, 10];
+  const barColors = ['#EF4444', '#F87171', '#F59E0B', '#FBBF24', '#22C55E', '#16A34A'];
+
+  scoreDistChart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1F2937',
+      borderColor: 'rgba(255,255,255,0.1)',
+      textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 13 },
+      formatter: function(params) {
+        const p = params[0];
+        return '评分区间: <b>' + p.name + '</b><br/>推荐次数: <b>' + p.value + '</b>';
+      }
+    },
+    grid: {
+      top: 16, left: 56, right: 24, bottom: 32
+    },
+    xAxis: {
+      type: 'category',
+      data: scoreBins,
+      axisLine: { lineStyle: { color: '#374151' } },
+      axisLabel: {
+        color: '#94A3B8',
+        fontFamily: "'Fira Code', monospace",
+        fontSize: 12
+      },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisLabel: {
+        color: '#64748B',
+        fontFamily: "'Fira Code', monospace",
+        fontSize: 11
+      },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+    },
+    series: [{
+      type: 'bar',
+      data: scoreCounts.map(function(val, idx) {
+        return {
+          value: val,
+          itemStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: barColors[idx] },
+              { offset: 1, color: barColors[idx] + '66' }
+            ]),
+            borderRadius: [4, 4, 0, 0]
+          }
+        };
+      }),
+      barWidth: '50%',
+      label: {
+        show: true,
+        position: 'top',
+        color: '#94A3B8',
+        fontFamily: "'Fira Code', monospace",
+        fontSize: 12
+      }
+    }]
+  });
+
+  // ===== Resize =====
+  window.addEventListener('resize', function() {
+    winRateChart.resize();
+    scoreDistChart.resize();
+  });
+
+  // Re-init Lucide icons
+  lucide.createIcons();
+});
+</script>
+{% endblock %}

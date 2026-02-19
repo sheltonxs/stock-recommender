@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}A股智选{% endblock %}</title>
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <!-- ECharts -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.min.js"></script>
+
+  <style>
+    /* ===== CSS Reset ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ===== CSS Variables (Design Tokens) ===== */
+    :root {
+      --bg-primary: #0B0F19;
+      --bg-card: #111827;
+      --bg-elevated: #1F2937;
+      --bg-input: #1A2332;
+      --text-primary: #F1F5F9;
+      --text-secondary: #94A3B8;
+      --text-muted: #64748B;
+      --text-disabled: #475569;
+      --color-up: #EF4444;
+      --color-up-light: #FCA5A5;
+      --color-up-dark: #991B1B;
+      --color-down: #22C55E;
+      --color-down-light: #86EFAC;
+      --color-down-dark: #166534;
+      --color-flat: #F8FAFC;
+      --color-primary: #3B82F6;
+      --color-primary-light: #60A5FA;
+      --color-primary-dark: #1E40AF;
+      --color-accent: #F59E0B;
+      --color-warning: #F97316;
+      --color-info: #06B6D4;
+      --font-data: 'Fira Code', 'SF Mono', 'Consolas', monospace;
+      --font-ui: 'Fira Sans', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-xl: 16px;
+      --shadow-sm: 0 1px 2px rgba(0,0,0,0.3);
+      --shadow-md: 0 4px 12px rgba(0,0,0,0.4);
+      --shadow-lg: 0 10px 24px rgba(0,0,0,0.5);
+      --border-subtle: rgba(255,255,255,0.06);
+      --border-default: rgba(255,255,255,0.1);
+      --transition-fast: 150ms ease;
+      --transition-normal: 200ms ease;
+    }
+
+    /* ===== Base ===== */
+    html { font-size: 16px; -webkit-font-smoothing: antialiased; }
+    body {
+      font-family: var(--font-ui);
+      background: var(--bg-primary);
+      color: var(--text-primary);
+      min-height: 100vh;
+      line-height: 1.6;
+    }
+    a { color: var(--color-primary); text-decoration: none; transition: color var(--transition-fast); }
+    a:hover { color: var(--color-primary-light); }
+    :focus-visible {
+      outline: 2px solid var(--color-primary);
+      outline-offset: 2px;
+      border-radius: var(--radius-sm);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    }
+
+    /* ===== Navbar ===== */
+    .navbar {
+      position: fixed; top: 0; left: 0; right: 0; height: 56px;
+      background: rgba(11,15,25,0.88);
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex; align-items: center; padding: 0 24px;
+      z-index: 50;
+    }
+    .navbar__logo {
+      font: 700 18px var(--font-ui);
+      color: var(--color-primary);
+      display: flex; align-items: center; gap: 8px;
+      cursor: pointer;
+    }
+    .navbar__logo svg { width: 22px; height: 22px; }
+    .navbar__nav { display: flex; gap: 4px; margin-left: 32px; }
+    .navbar__link {
+      font: 500 14px var(--font-ui);
+      color: var(--text-secondary);
+      padding: 6px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .navbar__link:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+    .navbar__link--active { color: var(--color-primary); background: rgba(59,130,246,0.1); }
+    .navbar__right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+    .navbar__date {
+      font: 400 13px var(--font-data);
+      color: var(--text-muted);
+    }
+    .navbar__status {
+      display: flex; align-items: center; gap: 6px;
+      font: 400 12px var(--font-ui);
+      color: var(--color-down);
+    }
+    .navbar__status-dot {
+      width: 6px; height: 6px;
+      background: var(--color-down);
+      border-radius: 50%;
+      animation: pulse-dot 2s ease-in-out infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ===== Layout ===== */
+    .main { padding: 72px 24px 60px; max-width: 1440px; margin: 0 auto; }
+
+    /* ===== Cards ===== */
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 20px;
+      transition: all var(--transition-normal);
+    }
+    .card:hover {
+      border-color: rgba(59,130,246,0.2);
+      box-shadow: var(--shadow-md);
+    }
+    .card__title {
+      font: 600 14px var(--font-ui);
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .card__title svg { width: 16px; height: 16px; opacity: 0.6; }
+
+    /* ===== Grid ===== */
+    .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+
+    /* ===== Index Cards ===== */
+    .index-card { padding: 16px 20px; }
+    .index-card__name {
+      font: 500 13px var(--font-ui);
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+    .index-card__price {
+      font: 700 26px var(--font-data);
+      color: var(--text-primary);
+      line-height: 1.2;
+    }
+    .index-card__change {
+      font: 600 15px var(--font-data);
+      margin-top: 4px;
+    }
+    .index-card__volume {
+      font: 400 12px var(--font-ui);
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    /* ===== Color Helpers ===== */
+    .up { color: var(--color-up) !important; }
+    .down { color: var(--color-down) !important; }
+    .flat { color: var(--color-flat) !important; }
+    .accent { color: var(--color-accent) !important; }
+
+    /* ===== Table ===== */
+    .rec-table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    .rec-table th {
+      font: 500 12px var(--font-ui);
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border-subtle);
+      text-align: left;
+      white-space: nowrap;
+    }
+    .rec-table th:last-child { text-align: center; }
+    .rec-table td {
+      font: 400 14px var(--font-data);
+      color: var(--text-primary);
+      padding: 14px;
+      border-bottom: 1px solid rgba(255,255,255,0.03);
+      vertical-align: middle;
+    }
+    .rec-table tr { cursor: pointer; transition: background var(--transition-fast); }
+    .rec-table tbody tr:hover td { background: rgba(59,130,246,0.06); }
+    .rec-table .rank-cell {
+      font: 700 16px var(--font-data);
+      color: var(--color-accent);
+      width: 40px;
+      text-align: center;
+    }
+    .rec-table .name-cell .stock-name { font: 600 14px var(--font-ui); color: var(--text-primary); }
+    .rec-table .name-cell .stock-code { font: 400 11px var(--font-data); color: var(--text-muted); }
+    .rec-table .score-cell { font: 600 16px var(--font-data); text-align: center; }
+
+    /* ===== Score Badge ===== */
+    .score-badge {
+      display: inline-flex; align-items: center;
+      padding: 3px 10px; border-radius: 20px;
+      font: 600 12px var(--font-ui); white-space: nowrap;
+    }
+    .score-badge--bullish { background: rgba(239,68,68,0.12); color: #F87171; }
+    .score-badge--neutral { background: rgba(245,158,11,0.12); color: #FBBF24; }
+    .score-badge--bearish { background: rgba(34,197,94,0.12); color: #4ADE80; }
+
+    /* ===== Signal Tags ===== */
+    .signal-tag {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 2px 8px; border-radius: var(--radius-sm);
+      font: 400 12px var(--font-ui);
+      margin: 2px 2px;
+    }
+    .signal-tag--bullish { background: rgba(239,68,68,0.08); color: var(--color-up-light); }
+    .signal-tag--bearish { background: rgba(34,197,94,0.08); color: var(--color-down-light); }
+    .signal-tag--warning { background: rgba(245,158,11,0.08); color: #FDE68A; }
+
+    /* ===== Buttons ===== */
+    .btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      font: 500 14px var(--font-ui);
+      padding: 8px 20px; border-radius: var(--radius-md);
+      border: none; cursor: pointer;
+      transition: all var(--transition-normal);
+    }
+    .btn svg { width: 16px; height: 16px; }
+    .btn-primary { background: var(--color-accent); color: #0B0F19; }
+    .btn-primary:hover { background: #D97706; transform: translateY(-1px); }
+    .btn-secondary { background: transparent; color: var(--color-primary); border: 1px solid var(--color-primary); }
+    .btn-secondary:hover { background: rgba(59,130,246,0.1); }
+    .btn-ghost { background: transparent; color: var(--text-secondary); }
+    .btn-ghost:hover { color: var(--text-primary); background: rgba(255,255,255,0.05); }
+
+    /* ===== Tabs ===== */
+    .tabs { display: flex; gap: 2px; background: var(--bg-elevated); border-radius: var(--radius-md); padding: 3px; }
+    .tab-btn {
+      font: 500 13px var(--font-ui);
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 6px;
+      border: none; background: transparent;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .tab-btn:hover { color: var(--text-secondary); }
+    .tab-btn--active { background: var(--bg-card); color: var(--color-primary); box-shadow: var(--shadow-sm); }
+
+    /* ===== Sentiment ===== */
+    .sentiment-bar {
+      display: flex; align-items: center; gap: 24px;
+      flex-wrap: wrap;
+    }
+    .sentiment-stat {
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+    }
+    .sentiment-stat__value { font: 700 20px var(--font-data); }
+    .sentiment-stat__label { font: 400 12px var(--font-ui); color: var(--text-muted); }
+
+    /* ===== Section ===== */
+    .section { margin-bottom: 24px; }
+    .section__header {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .section__title {
+      font: 600 16px var(--font-ui);
+      color: var(--text-primary);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .section__title svg { width: 18px; height: 18px; color: var(--color-primary); }
+
+    /* ===== Disclaimer ===== */
+    .disclaimer {
+      position: fixed; bottom: 0; left: 0; right: 0; height: 36px;
+      background: rgba(245,158,11,0.06);
+      border-top: 1px solid rgba(245,158,11,0.15);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 40;
+    }
+    .disclaimer__text {
+      font: 400 12px var(--font-ui);
+      color: #FDE68A;
+      letter-spacing: 0.01em;
+      opacity: 0.8;
+    }
+
+    /* ===== Skeleton ===== */
+    .skeleton {
+      background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+      background-size: 200% 100%;
+      animation: shimmer 1.5s infinite;
+      border-radius: var(--radius-sm);
+    }
+    @keyframes shimmer {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+
+    /* ===== Back Link ===== */
+    .back-link {
+      display: inline-flex; align-items: center; gap: 6px;
+      font: 500 14px var(--font-ui);
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: color var(--transition-fast);
+      margin-bottom: 20px;
+    }
+    .back-link:hover { color: var(--text-primary); }
+    .back-link svg { width: 16px; height: 16px; }
+
+    /* ===== Responsive ===== */
+    @media (max-width: 1024px) {
+      .grid-4 { grid-template-columns: repeat(2, 1fr); }
+      .grid-3 { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 768px) {
+      .main { padding: 68px 16px 52px; }
+      .navbar__nav { display: none; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .grid-2 { grid-template-columns: 1fr; }
+      .grid-3 { grid-template-columns: 1fr; }
+      .index-card__price { font-size: 22px; }
+      .rec-table { font-size: 13px; }
+      .rec-table td { padding: 10px 8px; }
+    }
+
+    {% block extra_style %}{% endblock %}
+  </style>
+</head>
+<body>
+  <!-- Navbar -->
+  <nav class="navbar">
+    <a href="/" class="navbar__logo">
+      <i data-lucide="bar-chart-2"></i>
+      A股智选
+    </a>
+    <div class="navbar__nav">
+      <a href="/" class="navbar__link {% block nav_dashboard %}{% endblock %}">看板</a>
+      <a href="/history" class="navbar__link {% block nav_history %}{% endblock %}">历史</a>
+      <a href="/settings" class="navbar__link {% block nav_settings %}{% endblock %}">设置</a>
+    </div>
+    <div class="navbar__search" style="margin-left:auto;position:relative;">
+      <input type="text" id="navSearch" placeholder="搜索股票代码/名称..."
+             style="width:220px;padding:6px 12px 6px 32px;background:var(--bg-elevated);border:1px solid var(--border-subtle);
+                    border-radius:20px;color:var(--text-primary);font:400 13px var(--font-ui);outline:none;
+                    transition:border-color var(--transition-fast);"
+             onfocus="this.style.borderColor='var(--color-primary)'" onblur="setTimeout(()=>{this.style.borderColor='var(--border-subtle)';document.getElementById('searchDropdown').style.display='none'},200)">
+      <i data-lucide="search" style="position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--text-muted);pointer-events:none;"></i>
+      <div id="searchDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;margin-top:6px;
+                background:var(--bg-card);border:1px solid var(--border-default);border-radius:var(--radius-md);
+                box-shadow:var(--shadow-lg);max-height:320px;overflow-y:auto;z-index:100;"></div>
+    </div>
+    <div class="navbar__right" style="margin-left:16px;">
+      <span class="navbar__status">
+        <span class="navbar__status-dot"></span>
+        数据已更新
+      </span>
+      <span class="navbar__date">{{ today }}</span>
+    </div>
+  </nav>
+
+  <!-- Content -->
+  <main class="main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <!-- Disclaimer -->
+  <div class="disclaimer">
+    <span class="disclaimer__text">投资有风险，入市需谨慎。本系统仅供学习研究参考，不构成任何投资建议。</span>
+  </div>
+
+  <script>
+    lucide.createIcons();
+    /* ===== Global Search ===== */
+    (function(){
+      var input = document.getElementById('navSearch');
+      var dropdown = document.getElementById('searchDropdown');
+      var timer = null;
+      if(!input) return;
+
+      function buildResultItem(s) {
+        var a = document.createElement('a');
+        a.href = '/stock/' + encodeURIComponent(s.code);
+        a.style.cssText = 'display:flex;align-items:center;justify-content:space-between;padding:10px 16px;border-bottom:1px solid var(--border-subtle);cursor:pointer;text-decoration:none;transition:background 150ms;';
+        a.addEventListener('mouseover', function(){ a.style.background='rgba(59,130,246,0.06)'; });
+        a.addEventListener('mouseout', function(){ a.style.background='transparent'; });
+
+        var left = document.createElement('div');
+        var nameDiv = document.createElement('div');
+        nameDiv.style.cssText = 'font:500 14px var(--font-ui);color:var(--text-primary);';
+        nameDiv.textContent = s.name;
+        var codeDiv = document.createElement('div');
+        codeDiv.style.cssText = 'font:400 11px var(--font-data);color:var(--text-muted);';
+        codeDiv.textContent = s.code + ' \u00B7 ' + s.industry;
+        left.appendChild(nameDiv);
+        left.appendChild(codeDiv);
+
+        var right = document.createElement('div');
+        right.style.textAlign = 'right';
+        var chgDiv = document.createElement('div');
+        var chgColor = s.change_pct > 0 ? 'var(--color-up)' : s.change_pct < 0 ? 'var(--color-down)' : 'var(--text-primary)';
+        chgDiv.style.cssText = 'font:600 13px var(--font-data);color:' + chgColor + ';';
+        chgDiv.textContent = (s.change_pct > 0 ? '+' : '') + s.change_pct + '%';
+        var scoreDiv = document.createElement('div');
+        scoreDiv.style.cssText = 'font:400 11px var(--font-data);color:var(--text-muted);';
+        scoreDiv.textContent = '\u8BC4\u5206 ' + s.total_score;
+        right.appendChild(chgDiv);
+        right.appendChild(scoreDiv);
+
+        a.appendChild(left);
+        a.appendChild(right);
+        return a;
+      }
+
+      input.addEventListener('input', function(){
+        clearTimeout(timer);
+        var q = input.value.trim();
+        if(q.length < 1){ dropdown.style.display='none'; return; }
+        timer = setTimeout(function(){
+          fetch('/api/search?q=' + encodeURIComponent(q))
+            .then(function(r){ return r.json(); })
+            .then(function(data){
+              dropdown.textContent = '';
+              if(!data.data || data.data.length === 0){
+                var empty = document.createElement('div');
+                empty.style.cssText = 'padding:12px 16px;color:var(--text-muted);font:400 13px var(--font-ui);';
+                empty.textContent = '\u65E0\u5339\u914D\u7ED3\u679C';
+                dropdown.appendChild(empty);
+              } else {
+                data.data.forEach(function(s){ dropdown.appendChild(buildResultItem(s)); });
+              }
+              dropdown.style.display = 'block';
+            });
+        }, 200);
+      });
+    })();
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

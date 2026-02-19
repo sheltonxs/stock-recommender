@@ -1,0 +1,673 @@
+{% extends "base.html" %}
+
+{% block title %}{{ stock.name }} ({{ stock.code }}) - A股智选{% endblock %}
+
+{% block extra_style %}
+<style>
+  /* ===== Stock Header ===== */
+  .stock-header {
+    display: flex; align-items: flex-start; justify-content: space-between;
+    flex-wrap: wrap; gap: 20px; margin-bottom: 24px;
+  }
+  .stock-header__left { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  .stock-header__name { font: 700 28px var(--font-ui); color: var(--text-primary); }
+  .stock-header__code { font: 400 16px var(--font-data); color: var(--text-muted); }
+  .stock-header__industry {
+    font: 400 13px var(--font-ui); color: var(--text-muted);
+    padding: 2px 10px; background: var(--bg-elevated); border-radius: 12px;
+  }
+  .stock-header__right { text-align: right; }
+  .stock-header__price { font: 700 32px var(--font-data); }
+  .stock-header__change { font: 600 18px var(--font-data); }
+
+  /* ===== Score Overview ===== */
+  .score-overview { display: flex; gap: 12px; margin-bottom: 24px; flex-wrap: wrap; }
+  .score-item {
+    flex: 1; min-width: 120px;
+    padding: 14px 16px;
+    background: var(--bg-card); border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg); text-align: center;
+  }
+  .score-item__label { font: 400 12px var(--font-ui); color: var(--text-muted); margin-bottom: 6px; }
+  .score-item__value { font: 700 24px var(--font-data); }
+  .score-item--total { border-color: rgba(245,158,11,0.3); }
+  .score-item--total .score-item__value { color: var(--color-accent); }
+
+  /* ===== Chart Container ===== */
+  .chart-container { position: relative; }
+  .chart-tabs { position: absolute; top: 16px; right: 16px; z-index: 5; }
+
+  /* ===== Analysis Card ===== */
+  .analysis-section { margin-bottom: 16px; }
+  .analysis-section__title {
+    font: 600 14px var(--font-ui); color: var(--color-primary);
+    margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  }
+  .analysis-item {
+    display: flex; align-items: flex-start; gap: 8px;
+    padding: 6px 0; font: 400 14px var(--font-ui);
+  }
+  .analysis-item__icon { flex-shrink: 0; width: 18px; text-align: center; font-size: 14px; margin-top: 1px; }
+  .analysis-item--bullish .analysis-item__icon { color: var(--color-up); }
+  .analysis-item--warning .analysis-item__icon { color: var(--color-accent); }
+  .analysis-item--neutral .analysis-item__icon { color: var(--color-info); }
+  .analysis-item--bearish .analysis-item__icon { color: var(--color-down); }
+
+  /* ===== Advice Box ===== */
+  .advice-box {
+    padding: 14px 18px; border-radius: var(--radius-md);
+    background: rgba(59,130,246,0.06); border-left: 3px solid var(--color-primary);
+    margin-top: 16px;
+  }
+  .advice-box__label { font: 600 13px var(--font-ui); color: var(--color-primary); margin-bottom: 4px; }
+  .advice-box__text { font: 400 14px var(--font-ui); color: var(--text-primary); line-height: 1.6; }
+
+  /* ===== Fundamental Table ===== */
+  .fund-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .fund-item { padding: 10px 12px; background: var(--bg-elevated); border-radius: var(--radius-md); }
+  .fund-item__label { font: 400 12px var(--font-ui); color: var(--text-muted); }
+  .fund-item__value { font: 600 18px var(--font-data); color: var(--text-primary); margin-top: 2px; }
+  .fund-item__vs {
+    font: 400 11px var(--font-ui); color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  /* ===== Money Flow Bars ===== */
+  .flow-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 8px 0; border-bottom: 1px solid var(--border-subtle);
+  }
+  .flow-row:last-child { border-bottom: none; }
+  .flow-row__date { font: 400 13px var(--font-data); color: var(--text-muted); width: 50px; }
+  .flow-row__bar-wrap { flex: 1; height: 20px; position: relative; background: var(--bg-elevated); border-radius: 3px; overflow: hidden; }
+  .flow-row__bar {
+    position: absolute; top: 0; height: 100%; border-radius: 3px;
+    transition: width 0.5s ease;
+  }
+  .flow-row__bar--pos { left: 50%; background: var(--color-up); }
+  .flow-row__bar--neg { right: 50%; background: var(--color-down); }
+  .flow-row__val { font: 500 13px var(--font-data); width: 80px; text-align: right; }
+
+  @media (max-width: 768px) {
+    .stock-header { flex-direction: column; }
+    .stock-header__right { text-align: left; }
+    .fund-grid { grid-template-columns: repeat(2, 1fr); }
+    .score-overview { gap: 8px; }
+    .score-item { min-width: 80px; padding: 10px; }
+    .score-item__value { font-size: 18px; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Back Link -->
+<a href="/" class="back-link"><i data-lucide="arrow-left"></i> 返回看板</a>
+
+<!-- Stock Header -->
+<div class="stock-header">
+  <div class="stock-header__left">
+    <span class="stock-header__name">{{ stock.name }}</span>
+    <span class="stock-header__code">{{ stock.code }}</span>
+    <span class="stock-header__industry">{{ stock.industry }}</span>
+  </div>
+  <div class="stock-header__right">
+    <div class="stock-header__price {{ 'up' if stock.change_pct > 0 else 'down' if stock.change_pct < 0 else 'flat' }}">
+      {{ "{:,.2f}".format(stock.close_price) }}
+    </div>
+    <div class="stock-header__change {{ 'up' if stock.change_pct > 0 else 'down' if stock.change_pct < 0 else 'flat' }}">
+      {{ "+" if stock.change_pct > 0 else "" }}{{ stock.change_pct }}%
+    </div>
+  </div>
+</div>
+
+<!-- Score Overview -->
+<div class="score-overview">
+  <div class="score-item score-item--total">
+    <div class="score-item__label">综合评分</div>
+    <div class="score-item__value">{{ stock.total_score }}</div>
+  </div>
+  <div class="score-item">
+    <div class="score-item__label">技术面</div>
+    <div class="score-item__value" style="color:{{ '#EF4444' if stock.technical_score >= 80 else '#F59E0B' if stock.technical_score >= 60 else '#22C55E' }}">{{ stock.technical_score }}</div>
+  </div>
+  <div class="score-item">
+    <div class="score-item__label">基本面</div>
+    <div class="score-item__value" style="color:{{ '#EF4444' if stock.fundamental_score >= 80 else '#F59E0B' if stock.fundamental_score >= 60 else '#22C55E' }}">{{ stock.fundamental_score }}</div>
+  </div>
+  <div class="score-item">
+    <div class="score-item__label">资金面</div>
+    <div class="score-item__value" style="color:{{ '#EF4444' if stock.money_flow_score >= 80 else '#F59E0B' if stock.money_flow_score >= 60 else '#22C55E' }}">{{ stock.money_flow_score }}</div>
+  </div>
+  <div class="score-item">
+    <div class="score-item__label">市场情绪</div>
+    <div class="score-item__value" style="color:{{ '#EF4444' if stock.sentiment_score >= 80 else '#F59E0B' if stock.sentiment_score >= 60 else '#22C55E' }}">{{ stock.sentiment_score }}</div>
+  </div>
+</div>
+
+<!-- K-line Chart -->
+<section class="section">
+  <div class="card chart-container" style="padding:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div class="card__title" style="margin-bottom:0;"><i data-lucide="candlestick-chart"></i> K线图 · 技术指标</div>
+      <div class="tabs chart-tabs" style="position:static;">
+        <button class="tab-btn tab-btn--active" data-overlay="ma" onclick="switchOverlay('ma',this)">MA均线</button>
+        <button class="tab-btn" data-overlay="boll" onclick="switchOverlay('boll',this)">BOLL</button>
+      </div>
+    </div>
+    <div id="klineChart" style="width:100%;height:420px;"></div>
+  </div>
+</section>
+
+<!-- Sub Indicator Chart -->
+<section class="section">
+  <div class="card" style="padding:16px;">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div class="card__title" style="margin-bottom:0;"><i data-lucide="bar-chart-2"></i> 副图指标</div>
+      <div class="tabs">
+        <button class="tab-btn tab-btn--active" onclick="switchSub('macd',this)">MACD</button>
+        <button class="tab-btn" onclick="switchSub('kdj',this)">KDJ</button>
+        <button class="tab-btn" onclick="switchSub('rsi',this)">RSI</button>
+      </div>
+    </div>
+    <div id="subChart" style="width:100%;height:220px;"></div>
+  </div>
+</section>
+
+<!-- Analysis + Radar + Fundamental -->
+<section class="section">
+  <div class="grid-3">
+    <!-- Technical Analysis -->
+    <div class="card" style="grid-column: span 1;">
+      <div class="card__title"><i data-lucide="scan-line"></i> 技术分析详情</div>
+      {% if analysis %}
+        {% for sec in analysis.sections %}
+        <div class="analysis-section">
+          <div class="analysis-section__title">{{ sec.title }}</div>
+          {% for item in sec.signals %}
+          <div class="analysis-item analysis-item--{{ item.type }}">
+            <span class="analysis-item__icon">
+              {% if item.type == 'bullish' %}&#x2714;{% elif item.type == 'warning' %}&#x26A0;{% elif item.type == 'bearish' %}&#x2718;{% else %}&#x2139;{% endif %}
+            </span>
+            <span>{{ item.text }}</span>
+          </div>
+          {% endfor %}
+        </div>
+        {% endfor %}
+        <div class="advice-box">
+          <div class="advice-box__label">操作建议</div>
+          <div class="advice-box__text">{{ analysis.advice }}<br>止损参考: {{ analysis.stop_loss }}</div>
+        </div>
+      {% endif %}
+    </div>
+
+    <!-- Radar Chart -->
+    <div class="card">
+      <div class="card__title"><i data-lucide="radar"></i> 评分雷达</div>
+      <div id="radarChart" style="width:100%;height:280px;"></div>
+    </div>
+
+    <!-- Fundamental -->
+    <div class="card">
+      <div class="card__title"><i data-lucide="file-text"></i> 基本面概况</div>
+      {% if fundamentals %}
+      <div class="fund-grid">
+        <div class="fund-item">
+          <div class="fund-item__label">PE(TTM)</div>
+          <div class="fund-item__value">{{ fundamentals.pe }}</div>
+          <div class="fund-item__vs">行业 {{ fundamentals.industry_pe }}</div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">PB</div>
+          <div class="fund-item__value">{{ fundamentals.pb }}</div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">ROE</div>
+          <div class="fund-item__value up">{{ fundamentals.roe }}%</div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">毛利率</div>
+          <div class="fund-item__value">{{ fundamentals.gross_margin }}%</div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">净利率</div>
+          <div class="fund-item__value">{{ fundamentals.net_margin }}%</div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">营收增速</div>
+          <div class="fund-item__value {{ 'up' if fundamentals.revenue_yoy > 0 else 'down' }}">
+            {{ "+" if fundamentals.revenue_yoy > 0 else "" }}{{ fundamentals.revenue_yoy }}%
+          </div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">净利增速</div>
+          <div class="fund-item__value {{ 'up' if fundamentals.profit_yoy > 0 else 'down' }}">
+            {{ "+" if fundamentals.profit_yoy > 0 else "" }}{{ fundamentals.profit_yoy }}%
+          </div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">负债率</div>
+          <div class="fund-item__value">{{ fundamentals.debt_ratio }}%</div>
+        </div>
+        <div class="fund-item">
+          <div class="fund-item__label">总市值</div>
+          <div class="fund-item__value">{{ fundamentals.market_cap }}亿</div>
+        </div>
+      </div>
+      {% endif %}
+    </div>
+  </div>
+</section>
+
+<!-- Money Flow -->
+<section class="section">
+  <div class="card">
+    <div class="card__title"><i data-lucide="trending-up"></i> 近5日资金流向 (万元)</div>
+    <div id="flowChart" style="width:100%;height:260px;"></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const klineRaw  = {{ kline_json | safe }};
+  const ma5Raw    = {{ ma5_json | safe }};
+  const ma10Raw   = {{ ma10_json | safe }};
+  const ma20Raw   = {{ ma20_json | safe }};
+  const ma60Raw   = {{ ma60_json | safe }};
+  const bollUp    = {{ boll_upper_json | safe }};
+  const bollMid   = {{ boll_mid_json | safe }};
+  const bollLow   = {{ boll_lower_json | safe }};
+  const difRaw    = {{ dif_json | safe }};
+  const deaRaw    = {{ dea_json | safe }};
+  const histRaw   = {{ macd_hist_json | safe }};
+  const rsi6Raw   = {{ rsi6_json | safe }};
+  const rsi12Raw  = {{ rsi12_json | safe }};
+  const rsi24Raw  = {{ rsi24_json | safe }};
+  const kdjKRaw   = {{ kdj_k_json | safe }};
+  const kdjDRaw   = {{ kdj_d_json | safe }};
+  const kdjJRaw   = {{ kdj_j_json | safe }};
+  const volColors = {{ vol_colors_json | safe }};
+
+  const dates = klineRaw.map(d => d.time);
+  const ohlc  = klineRaw.map(d => [d.open, d.close, d.low, d.high]);
+  const vols  = klineRaw.map(d => d.volume);
+
+  /* Helper: replace null with '-' for ECharts */
+  const clean = arr => arr.map(v => v === null ? '-' : v);
+
+  /* ===== K-line + Volume (main chart) ===== */
+  const klineChart = echarts.init(document.getElementById('klineChart'));
+  let currentOverlay = 'ma';
+
+  /* ===== Compute Support & Resistance ===== */
+  const recentCloses = klineRaw.slice(-60).map(d => d.close);
+  const recentHighs  = klineRaw.slice(-60).map(d => d.high);
+  const recentLows   = klineRaw.slice(-60).map(d => d.low);
+  const resistanceLevel = Math.max(...recentHighs);
+  const supportLevel    = Math.min(...recentLows);
+  const pivotLevel      = parseFloat(((resistanceLevel + supportLevel + recentCloses[recentCloses.length - 1]) / 3).toFixed(2));
+
+  function buildKlineOption(overlay) {
+    const series = [
+      {
+        name: 'K线', type: 'candlestick', data: ohlc,
+        itemStyle: {
+          color: '#EF4444', color0: '#22C55E',
+          borderColor: '#EF4444', borderColor0: '#22C55E'
+        },
+        markLine: {
+          symbol: 'none',
+          silent: true,
+          lineStyle: { width: 1, type: 'dashed' },
+          label: {
+            fontFamily: "'Fira Code', monospace",
+            fontSize: 10,
+            position: 'insideEndTop'
+          },
+          data: [
+            { yAxis: resistanceLevel, name: '压力', lineStyle: { color: '#EF4444', opacity: 0.6 }, label: { color: '#EF4444', formatter: '压力 ' + resistanceLevel } },
+            { yAxis: supportLevel,    name: '支撑', lineStyle: { color: '#22C55E', opacity: 0.6 }, label: { color: '#22C55E', formatter: '支撑 ' + supportLevel } },
+            { yAxis: pivotLevel,      name: '枢轴', lineStyle: { color: '#F59E0B', opacity: 0.4 }, label: { color: '#F59E0B', formatter: '枢轴 ' + pivotLevel } }
+          ]
+        }
+      },
+      {
+        name: '成交量', type: 'bar', data: vols.map((v, i) => ({
+          value: v,
+          itemStyle: { color: volColors[i], opacity: 0.5 }
+        })),
+        xAxisIndex: 1, yAxisIndex: 1
+      }
+    ];
+
+    if (overlay === 'ma') {
+      series.push(
+        { name: 'MA5',  type: 'line', data: clean(ma5Raw),  lineStyle: { width: 1, color: '#F59E0B' }, symbol: 'none', smooth: true },
+        { name: 'MA10', type: 'line', data: clean(ma10Raw), lineStyle: { width: 1, color: '#3B82F6' }, symbol: 'none', smooth: true },
+        { name: 'MA20', type: 'line', data: clean(ma20Raw), lineStyle: { width: 1, color: '#A855F7' }, symbol: 'none', smooth: true },
+        { name: 'MA60', type: 'line', data: clean(ma60Raw), lineStyle: { width: 1, color: '#06B6D4' }, symbol: 'none', smooth: true }
+      );
+    } else {
+      series.push(
+        { name: 'BOLL上轨', type: 'line', data: clean(bollUp),  lineStyle: { width: 1, color: '#F59E0B', type: 'dashed' }, symbol: 'none' },
+        { name: 'BOLL中轨', type: 'line', data: clean(bollMid), lineStyle: { width: 1, color: '#3B82F6' }, symbol: 'none' },
+        { name: 'BOLL下轨', type: 'line', data: clean(bollLow), lineStyle: { width: 1, color: '#F59E0B', type: 'dashed' }, symbol: 'none' },
+        {
+          name: 'BOLL区间', type: 'line', data: clean(bollUp), symbol: 'none',
+          lineStyle: { opacity: 0 },
+          areaStyle: { color: 'rgba(245,158,11,0.04)' },
+          stack: 'boll-area'
+        }
+      );
+    }
+
+    return {
+      animation: false,
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis', axisPointer: { type: 'cross' },
+        backgroundColor: '#1F2937',
+        borderColor: 'rgba(255,255,255,0.1)',
+        textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 12 }
+      },
+      legend: {
+        top: 0, left: 'center',
+        textStyle: { color: '#94A3B8', fontSize: 11, fontFamily: "'Fira Sans', sans-serif" },
+        inactiveColor: '#475569'
+      },
+      axisPointer: { link: [{ xAxisIndex: 'all' }] },
+      grid: [
+        { left: 60, right: 20, top: 40, height: '55%' },
+        { left: 60, right: 20, top: '76%', height: '16%' }
+      ],
+      xAxis: [
+        {
+          type: 'category', data: dates,
+          axisLine: { lineStyle: { color: '#374151' } },
+          axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+          splitLine: { show: false }
+        },
+        {
+          type: 'category', data: dates, gridIndex: 1,
+          axisLine: { lineStyle: { color: '#374151' } },
+          axisLabel: { show: false },
+          splitLine: { show: false }
+        }
+      ],
+      yAxis: [
+        {
+          scale: true,
+          axisLine: { lineStyle: { color: '#374151' } },
+          axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+          splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+        },
+        {
+          scale: true, gridIndex: 1,
+          axisLine: { show: false }, axisLabel: { show: false },
+          splitLine: { show: false }
+        }
+      ],
+      dataZoom: [
+        { type: 'inside', xAxisIndex: [0, 1], start: 50, end: 100 },
+        {
+          type: 'slider', xAxisIndex: [0, 1], start: 50, end: 100,
+          height: 20, bottom: 4,
+          borderColor: 'transparent', backgroundColor: 'rgba(255,255,255,0.03)',
+          fillerColor: 'rgba(59,130,246,0.15)',
+          handleStyle: { color: '#3B82F6', borderColor: '#3B82F6' },
+          textStyle: { color: '#64748B', fontSize: 10 }
+        }
+      ],
+      series: series
+    };
+  }
+
+  klineChart.setOption(buildKlineOption('ma'));
+
+  window.switchOverlay = function(type, btn) {
+    currentOverlay = type;
+    document.querySelectorAll('[data-overlay]').forEach(b => b.classList.remove('tab-btn--active'));
+    btn.classList.add('tab-btn--active');
+    klineChart.setOption(buildKlineOption(type), true);
+  };
+
+  /* ===== Sub Chart (MACD / KDJ / RSI) ===== */
+  const subChart = echarts.init(document.getElementById('subChart'));
+
+  function macdOption() {
+    const colors = histRaw.map(v => v === null ? '#374151' : (v >= 0 ? '#EF4444' : '#22C55E'));
+    return {
+      animation: false, backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: '#1F2937', borderColor: 'rgba(255,255,255,0.1)',
+        textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 12 }
+      },
+      legend: {
+        top: 0, textStyle: { color: '#94A3B8', fontSize: 11 }, inactiveColor: '#475569'
+      },
+      grid: { left: 60, right: 20, top: 30, bottom: 40 },
+      xAxis: {
+        type: 'category', data: dates,
+        axisLine: { lineStyle: { color: '#374151' } },
+        axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+        splitLine: { show: false }
+      },
+      yAxis: {
+        scale: true,
+        axisLine: { lineStyle: { color: '#374151' } },
+        axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+      },
+      dataZoom: [{ type: 'inside', start: 50, end: 100 }],
+      series: [
+        {
+          name: 'MACD柱', type: 'bar', data: histRaw.map((v, i) => ({
+            value: v === null ? 0 : v,
+            itemStyle: { color: colors[i] }
+          }))
+        },
+        { name: 'DIF', type: 'line', data: clean(difRaw), lineStyle: { width: 1.5, color: '#3B82F6' }, symbol: 'none' },
+        { name: 'DEA', type: 'line', data: clean(deaRaw), lineStyle: { width: 1.5, color: '#F59E0B' }, symbol: 'none' }
+      ]
+    };
+  }
+
+  function kdjOption() {
+    return {
+      animation: false, backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: '#1F2937', borderColor: 'rgba(255,255,255,0.1)',
+        textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 12 }
+      },
+      legend: { top: 0, textStyle: { color: '#94A3B8', fontSize: 11 }, inactiveColor: '#475569' },
+      grid: { left: 60, right: 20, top: 30, bottom: 40 },
+      xAxis: {
+        type: 'category', data: dates,
+        axisLine: { lineStyle: { color: '#374151' } },
+        axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+        splitLine: { show: false }
+      },
+      yAxis: {
+        min: 0, max: 100,
+        axisLine: { lineStyle: { color: '#374151' } },
+        axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+      },
+      dataZoom: [{ type: 'inside', start: 50, end: 100 }],
+      visualMap: { show: false },
+      series: [
+        { name: 'K', type: 'line', data: clean(kdjKRaw), lineStyle: { width: 1.5, color: '#3B82F6' }, symbol: 'none' },
+        { name: 'D', type: 'line', data: clean(kdjDRaw), lineStyle: { width: 1.5, color: '#F59E0B' }, symbol: 'none' },
+        { name: 'J', type: 'line', data: clean(kdjJRaw), lineStyle: { width: 1.5, color: '#A855F7' }, symbol: 'none' },
+        {
+          name: '超买', type: 'line', data: dates.map(() => 80),
+          lineStyle: { width: 1, color: '#EF4444', type: 'dashed', opacity: 0.4 }, symbol: 'none'
+        },
+        {
+          name: '超卖', type: 'line', data: dates.map(() => 20),
+          lineStyle: { width: 1, color: '#22C55E', type: 'dashed', opacity: 0.4 }, symbol: 'none'
+        }
+      ]
+    };
+  }
+
+  function rsiOption() {
+    return {
+      animation: false, backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: '#1F2937', borderColor: 'rgba(255,255,255,0.1)',
+        textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 12 }
+      },
+      legend: { top: 0, textStyle: { color: '#94A3B8', fontSize: 11 }, inactiveColor: '#475569' },
+      grid: { left: 60, right: 20, top: 30, bottom: 40 },
+      xAxis: {
+        type: 'category', data: dates,
+        axisLine: { lineStyle: { color: '#374151' } },
+        axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+        splitLine: { show: false }
+      },
+      yAxis: {
+        min: 0, max: 100,
+        axisLine: { lineStyle: { color: '#374151' } },
+        axisLabel: { color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace" },
+        splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+      },
+      dataZoom: [{ type: 'inside', start: 50, end: 100 }],
+      series: [
+        { name: 'RSI(6)',  type: 'line', data: clean(rsi6Raw),  lineStyle: { width: 1.5, color: '#F59E0B' }, symbol: 'none' },
+        { name: 'RSI(12)', type: 'line', data: clean(rsi12Raw), lineStyle: { width: 1.5, color: '#3B82F6' }, symbol: 'none' },
+        { name: 'RSI(24)', type: 'line', data: clean(rsi24Raw), lineStyle: { width: 1.5, color: '#A855F7' }, symbol: 'none' },
+        {
+          name: '超买70', type: 'line', data: dates.map(() => 70),
+          lineStyle: { width: 1, color: '#EF4444', type: 'dashed', opacity: 0.4 }, symbol: 'none'
+        },
+        {
+          name: '超卖30', type: 'line', data: dates.map(() => 30),
+          lineStyle: { width: 1, color: '#22C55E', type: 'dashed', opacity: 0.4 }, symbol: 'none'
+        }
+      ]
+    };
+  }
+
+  const subOptions = { macd: macdOption, kdj: kdjOption, rsi: rsiOption };
+  subChart.setOption(macdOption());
+
+  window.switchSub = function(type, btn) {
+    btn.parentNode.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('tab-btn--active'));
+    btn.classList.add('tab-btn--active');
+    subChart.setOption(subOptions[type](), true);
+  };
+
+  /* ===== Radar Chart ===== */
+  const radarChart = echarts.init(document.getElementById('radarChart'));
+  radarChart.setOption({
+    backgroundColor: 'transparent',
+    radar: {
+      indicator: [
+        { name: '技术面', max: 100 },
+        { name: '基本面', max: 100 },
+        { name: '资金面', max: 100 },
+        { name: '情绪面', max: 100 },
+      ],
+      axisLine: { lineStyle: { color: 'rgba(255,255,255,0.1)' } },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } },
+      splitArea: { areaStyle: { color: ['transparent'] } },
+      name: {
+        color: '#94A3B8',
+        fontFamily: "'Fira Sans', 'PingFang SC', sans-serif",
+        fontSize: 13
+      }
+    },
+    series: [{
+      type: 'radar',
+      data: [{
+        value: [{{ stock.technical_score }}, {{ stock.fundamental_score }}, {{ stock.money_flow_score }}, {{ stock.sentiment_score }}],
+        areaStyle: { color: 'rgba(59,130,246,0.2)' },
+        lineStyle: { color: '#3B82F6', width: 2 },
+        itemStyle: { color: '#3B82F6' },
+        symbol: 'circle', symbolSize: 6
+      }],
+      animationDuration: 800
+    }]
+  });
+
+  /* ===== Money Flow Chart ===== */
+  const flowData = {{ money_flow | tojson }};
+  const flowChart = echarts.init(document.getElementById('flowChart'));
+  flowChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      backgroundColor: '#1F2937', borderColor: 'rgba(255,255,255,0.1)',
+      textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 12 },
+      formatter: function(params) {
+        let s = '<b>' + params[0].name + '</b><br/>';
+        params.forEach(p => {
+          const val = p.value;
+          const color = val >= 0 ? '#EF4444' : '#22C55E';
+          s += p.seriesName + ': <span style="color:' + color + ';font-weight:600">' +
+               (val >= 0 ? '+' : '') + (val/10000).toFixed(2) + '亿</span><br/>';
+        });
+        return s;
+      }
+    },
+    legend: {
+      top: 0, textStyle: { color: '#94A3B8', fontSize: 11 }, inactiveColor: '#475569'
+    },
+    grid: { left: 60, right: 20, top: 35, bottom: 30 },
+    xAxis: {
+      type: 'category',
+      data: flowData.map(d => d.date).reverse(),
+      axisLine: { lineStyle: { color: '#374151' } },
+      axisLabel: { color: '#64748B', fontSize: 11, fontFamily: "'Fira Code', monospace" }
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { lineStyle: { color: '#374151' } },
+      axisLabel: {
+        color: '#64748B', fontSize: 10, fontFamily: "'Fira Code', monospace",
+        formatter: v => (v / 10000).toFixed(1) + '亿'
+      },
+      splitLine: { lineStyle: { color: 'rgba(255,255,255,0.04)' } }
+    },
+    series: [
+      {
+        name: '主力净流入', type: 'bar',
+        data: flowData.map(d => ({
+          value: d.main,
+          itemStyle: { color: d.main >= 0 ? '#EF4444' : '#22C55E' }
+        })).reverse()
+      },
+      {
+        name: '北向资金', type: 'bar',
+        data: flowData.map(d => ({
+          value: d.north,
+          itemStyle: { color: d.north >= 0 ? '#3B82F6' : '#60A5FA', opacity: 0.7 }
+        })).reverse()
+      },
+      {
+        name: '超大单', type: 'bar',
+        data: flowData.map(d => ({
+          value: d.super_large,
+          itemStyle: { color: d.super_large >= 0 ? '#F59E0B' : '#FBBF24', opacity: 0.7 }
+        })).reverse()
+      }
+    ]
+  });
+
+  /* ===== Resize ===== */
+  window.addEventListener('resize', function() {
+    klineChart.resize();
+    subChart.resize();
+    radarChart.resize();
+    flowChart.resize();
+  });
+
+  lucide.createIcons();
+});
+</script>
+{% endblock %}

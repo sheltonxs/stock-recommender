@@ -1,0 +1,754 @@
+{% extends "base.html" %}
+
+{% block title %}A股智选 - 每日推荐看板{% endblock %}
+{% block nav_dashboard %}navbar__link--active{% endblock %}
+
+{% block extra_style %}
+<style>
+  .gauge-wrap { display: flex; align-items: center; justify-content: center; gap: 40px; flex-wrap: wrap; }
+  .gauge-chart { width: 220px; height: 220px; }
+  .sentiment-stats {
+    display: grid; grid-template-columns: repeat(2, auto); gap: 12px 32px;
+  }
+  .sentiment-stat-row {
+    display: flex; align-items: center; gap: 10px;
+    font: 400 14px var(--font-ui); color: var(--text-secondary);
+  }
+  .sentiment-stat-row__val {
+    font: 600 18px var(--font-data);
+    min-width: 60px; text-align: right;
+  }
+  .risk-tag {
+    font: 500 11px var(--font-ui);
+    padding: 2px 8px; border-radius: 10px;
+    display: inline-block;
+  }
+  .risk-tag--low  { background: rgba(59,130,246,0.12); color: #60A5FA; }
+  .risk-tag--mid  { background: rgba(245,158,11,0.12); color: #FBBF24; }
+  .risk-tag--high { background: rgba(239,68,68,0.12); color: #F87171; }
+  .signals-cell { max-width: 320px; }
+
+  /* ===== Filter Toolbar ===== */
+  .filter-toolbar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .filter-select, .filter-input-sm {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font: 400 13px var(--font-ui);
+    padding: 6px 10px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color var(--transition-fast);
+  }
+  .filter-select:focus, .filter-input-sm:focus { border-color: var(--color-primary); }
+  .filter-select option { background: var(--bg-card); color: var(--text-primary); }
+  .filter-label {
+    font: 500 12px var(--font-ui);
+    color: var(--text-muted);
+    margin-right: -4px;
+  }
+  .filter-results {
+    margin-left: auto;
+    font: 400 13px var(--font-ui);
+    color: var(--text-secondary);
+  }
+  .filter-results strong { color: var(--color-primary); font-weight: 600; }
+
+  /* ===== Tier Headers ===== */
+  .tier-header {
+    display: flex; align-items: center; gap: 10px;
+    padding: 14px 20px 8px;
+    font: 600 14px var(--font-ui);
+    color: var(--text-secondary);
+  }
+  .tier-badge {
+    display: inline-flex; align-items: center;
+    padding: 2px 10px; border-radius: 12px;
+    font: 600 11px var(--font-data);
+  }
+  .tier-badge--1 { background: rgba(245,158,11,0.15); color: #FBBF24; }
+  .tier-badge--2 { background: rgba(59,130,246,0.12); color: #60A5FA; }
+  .tier-badge--3 { background: rgba(100,116,139,0.12); color: #94A3B8; }
+
+  /* ===== Compact Table ===== */
+  .compact-table td { padding: 10px 14px !important; font-size: 13px !important; }
+  .compact-table .rank-cell { font-size: 13px !important; }
+  .compact-table .name-cell .stock-name { font-size: 13px !important; }
+
+  /* ===== Pagination ===== */
+  .pagination {
+    display: flex; align-items: center; justify-content: center; gap: 4px;
+    padding: 16px 20px;
+  }
+  .page-btn {
+    font: 500 13px var(--font-data);
+    color: var(--text-secondary);
+    background: transparent;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+  }
+  .page-btn:hover { border-color: var(--color-primary); color: var(--color-primary); }
+  .page-btn--active { background: var(--color-primary); border-color: var(--color-primary); color: #fff; }
+  .page-btn:disabled { opacity: 0.3; cursor: default; }
+  .page-info {
+    font: 400 12px var(--font-ui);
+    color: var(--text-muted);
+    margin: 0 8px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Market Indices -->
+<section class="section">
+  <div class="grid-4">
+    {% for idx in indices %}
+    <div class="card index-card">
+      <div class="index-card__name">{{ idx.name }}</div>
+      {% if idx.get('is_north') %}
+        <div class="index-card__price up">+{{ idx.price }}亿</div>
+        <div class="index-card__change up">{{ idx.volume }}</div>
+      {% else %}
+        <div class="index-card__price">{{ "{:,.2f}".format(idx.price) }}</div>
+        <div class="index-card__change {{ 'up' if idx.change_pct > 0 else 'down' if idx.change_pct < 0 else 'flat' }}">
+          {{ "+" if idx.change_pct > 0 else "" }}{{ idx.change }}
+          ({{ "+" if idx.change_pct > 0 else "" }}{{ idx.change_pct }}%)
+        </div>
+        <div class="index-card__volume">成交额 {{ idx.volume }}</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- Charts Row: Heatmap + Sankey -->
+<section class="section">
+  <div class="grid-2">
+    <div class="card">
+      <div class="card__title"><i data-lucide="grid-3x3"></i> 板块热力图</div>
+      <div id="heatmapChart" style="width:100%;height:380px;"></div>
+    </div>
+    <div class="card">
+      <div class="card__title"><i data-lucide="git-branch"></i> 资金流向</div>
+      <div id="sankeyChart" style="width:100%;height:380px;"></div>
+    </div>
+  </div>
+</section>
+
+<!-- Sentiment + Distribution Row -->
+<section class="section">
+  <div class="grid-2">
+    <!-- Distribution Ring -->
+    <div class="card">
+      <div class="card__title"><i data-lucide="pie-chart"></i> 涨跌分布</div>
+      <div id="distChart" style="width:100%;height:260px;"></div>
+    </div>
+    <!-- Market Sentiment Gauge -->
+    <div class="card">
+      <div class="card__title"><i data-lucide="activity"></i> 市场情绪</div>
+      <div class="gauge-wrap">
+        <div id="gaugeChart" class="gauge-chart"></div>
+        <div class="sentiment-stats">
+          <div class="sentiment-stat-row">
+            <span class="sentiment-stat-row__val up">{{ sentiment.advance }}</span>
+            <span>家上涨</span>
+          </div>
+          <div class="sentiment-stat-row">
+            <span class="sentiment-stat-row__val down">{{ sentiment.decline }}</span>
+            <span>家下跌</span>
+          </div>
+          <div class="sentiment-stat-row">
+            <span class="sentiment-stat-row__val up">{{ sentiment.limit_up }}</span>
+            <span>家涨停</span>
+          </div>
+          <div class="sentiment-stat-row">
+            <span class="sentiment-stat-row__val down">{{ sentiment.limit_down }}</span>
+            <span>家跌停</span>
+          </div>
+          <div class="sentiment-stat-row">
+            <span class="sentiment-stat-row__val" style="color:var(--text-primary);">{{ sentiment.total_amount }}</span>
+            <span>两市成交</span>
+          </div>
+          <div class="sentiment-stat-row">
+            <span class="sentiment-stat-row__val" style="color:var(--text-primary);">{{ sentiment.avg_turnover }}%</span>
+            <span>平均换手</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- Recommendation Section -->
+<section class="section">
+  <div class="card" style="padding:0; overflow:hidden;">
+    <!-- Title -->
+    <div style="padding:20px 20px 0;">
+      <div class="section__title"><i data-lucide="trophy"></i> 今日 Top 100 推荐</div>
+    </div>
+
+    <!-- Filter Toolbar -->
+    <div class="filter-toolbar">
+      <span class="filter-label">行业</span>
+      <select class="filter-select" id="filterIndustry" onchange="applyFilters()">
+        <option value="">全部行业</option>
+      </select>
+
+      <span class="filter-label">风险</span>
+      <select class="filter-select" id="filterRisk" onchange="applyFilters()">
+        <option value="">全部</option>
+        <option value="低">低风险</option>
+        <option value="中">中风险</option>
+        <option value="高">高风险</option>
+      </select>
+
+      <span class="filter-label">最低分</span>
+      <input type="number" class="filter-input-sm" id="filterMinScore" value="0" min="0" max="100" step="5"
+             style="width:60px;" onchange="applyFilters()">
+
+      <span class="filter-label">排序</span>
+      <select class="filter-select" id="filterSort" onchange="applyFilters()">
+        <option value="total_score_desc">综合分 ↓</option>
+        <option value="total_score_asc">综合分 ↑</option>
+        <option value="change_pct_desc">涨幅 ↓</option>
+        <option value="change_pct_asc">涨幅 ↑</option>
+        <option value="technical_desc">技术分 ↓</option>
+        <option value="fundamental_desc">基本面 ↓</option>
+      </select>
+
+      <span class="filter-results" id="filterResults"></span>
+    </div>
+
+    <!-- Dynamic Table Area -->
+    <div id="recTableArea" style="overflow-x:auto;"></div>
+
+    <!-- Pagination -->
+    <div class="pagination" id="paginationArea"></div>
+  </div>
+</section>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  /* ===== Data ===== */
+  var ALL_RECS = {{ all_recommendations_json | safe }};
+  var ALL_INDUSTRIES = {{ industries_json | safe }};
+  var sectorData = {{ sectors | safe }};
+
+  /* ===== Populate industry dropdown ===== */
+  var indSelect = document.getElementById('filterIndustry');
+  ALL_INDUSTRIES.forEach(function(ind) {
+    var opt = document.createElement('option');
+    opt.value = ind;
+    opt.textContent = ind;
+    indSelect.appendChild(opt);
+  });
+
+  /* ===== Filter & Sort Logic ===== */
+  var currentFiltered = ALL_RECS.slice();
+  var currentPage = 1;
+  var PAGE_SIZE = 20;
+
+  window.applyFilters = function() {
+    var industry = document.getElementById('filterIndustry').value;
+    var risk = document.getElementById('filterRisk').value;
+    var minScore = parseInt(document.getElementById('filterMinScore').value) || 0;
+    var sortKey = document.getElementById('filterSort').value;
+
+    currentFiltered = ALL_RECS.filter(function(r) {
+      if (industry && r.industry !== industry) return false;
+      if (risk && r.risk_level !== risk) return false;
+      if (r.total_score < minScore) return false;
+      return true;
+    });
+
+    /* Sort */
+    var parts = sortKey.split('_');
+    var dir = parts.pop();
+    var field = parts.join('_');
+    currentFiltered.sort(function(a, b) {
+      var va = a[field], vb = b[field];
+      return dir === 'desc' ? vb - va : va - vb;
+    });
+
+    /* Re-rank */
+    currentFiltered.forEach(function(r, i) { r._filteredRank = i + 1; });
+
+    currentPage = 1;
+    renderRecommendations();
+  };
+
+  /* ===== Render Recommendations ===== */
+  function renderRecommendations() {
+    var area = document.getElementById('recTableArea');
+    var pagArea = document.getElementById('paginationArea');
+    var resultsEl = document.getElementById('filterResults');
+
+    area.textContent = '';
+    pagArea.textContent = '';
+
+    var total = currentFiltered.length;
+    resultsEl.textContent = '';
+    var strong = document.createElement('strong');
+    strong.textContent = total;
+    resultsEl.appendChild(strong);
+    resultsEl.appendChild(document.createTextNode(' 只股票'));
+
+    if (total === 0) {
+      var empty = document.createElement('div');
+      empty.style.cssText = 'text-align:center;padding:40px 0;color:var(--text-muted);font:400 14px var(--font-ui);';
+      empty.textContent = '无匹配结果，请调整筛选条件';
+      area.appendChild(empty);
+      return;
+    }
+
+    /* Split into tiers */
+    var tier1 = currentFiltered.slice(0, 10);
+    var tier2 = currentFiltered.slice(10, 30);
+    var tier3 = currentFiltered.slice(30);
+
+    /* --- Tier 1: Top 10 (always shown) --- */
+    if (tier1.length > 0) {
+      area.appendChild(buildTierHeader(1, 'Top 10', tier1.length));
+      area.appendChild(buildTable(tier1, false));
+    }
+
+    /* --- Tier 2: 11-30 (always shown) --- */
+    if (tier2.length > 0) {
+      area.appendChild(buildTierHeader(2, '11-30', tier2.length));
+      area.appendChild(buildTable(tier2, false));
+    }
+
+    /* --- Tier 3: 31-100 (paginated) --- */
+    if (tier3.length > 0) {
+      area.appendChild(buildTierHeader(3, '31-100', tier3.length));
+      var totalPages = Math.ceil(tier3.length / PAGE_SIZE);
+      var start = (currentPage - 1) * PAGE_SIZE;
+      var pageItems = tier3.slice(start, start + PAGE_SIZE);
+      area.appendChild(buildTable(pageItems, true));
+
+      /* Pagination controls */
+      if (totalPages > 1) {
+        buildPagination(pagArea, totalPages);
+      }
+    }
+  }
+
+  function buildTierHeader(tier, label, count) {
+    var div = document.createElement('div');
+    div.className = 'tier-header';
+    var badge = document.createElement('span');
+    badge.className = 'tier-badge tier-badge--' + tier;
+    badge.textContent = label;
+    div.appendChild(badge);
+    var countSpan = document.createElement('span');
+    countSpan.style.cssText = 'font:400 12px var(--font-ui);color:var(--text-muted);';
+    countSpan.textContent = count + ' 只';
+    div.appendChild(countSpan);
+    return div;
+  }
+
+  function buildTable(items, isCompact) {
+    var wrapper = document.createElement('div');
+    wrapper.style.overflowX = 'auto';
+
+    var table = document.createElement('table');
+    table.className = 'rec-table' + (isCompact ? ' compact-table' : '');
+
+    /* thead */
+    var thead = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    var headers = [
+      { text: '#', style: 'text-align:center;width:40px' },
+      { text: '股票', style: '' },
+      { text: '行业', style: '' },
+      { text: '现价', style: '' },
+      { text: '涨跌幅', style: '' },
+      { text: '综合分', style: 'text-align:center' },
+      { text: '技术面', style: 'text-align:center' },
+      { text: '基本面', style: 'text-align:center' },
+      { text: '资金面', style: 'text-align:center' },
+      { text: '风险', style: '' },
+      { text: '建议', style: 'text-align:center' },
+    ];
+    if (!isCompact) {
+      headers.push({ text: '核心信号', style: '' });
+    }
+    headers.forEach(function(h) {
+      var th = document.createElement('th');
+      th.textContent = h.text;
+      if (h.style) th.style.cssText = h.style;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    /* tbody */
+    var tbody = document.createElement('tbody');
+    items.forEach(function(rec) {
+      var tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', function() { location.href = '/stock/' + encodeURIComponent(rec.code); });
+
+      /* Rank */
+      var tdRank = document.createElement('td');
+      tdRank.className = 'rank-cell';
+      tdRank.textContent = rec._filteredRank || rec.rank;
+      tr.appendChild(tdRank);
+
+      /* Name */
+      var tdName = document.createElement('td');
+      tdName.className = 'name-cell';
+      var nameDiv = document.createElement('div');
+      nameDiv.className = 'stock-name';
+      nameDiv.textContent = rec.name;
+      var codeDiv = document.createElement('div');
+      codeDiv.className = 'stock-code';
+      codeDiv.textContent = rec.code;
+      tdName.appendChild(nameDiv);
+      tdName.appendChild(codeDiv);
+      tr.appendChild(tdName);
+
+      /* Industry */
+      var tdInd = document.createElement('td');
+      tdInd.style.cssText = 'font:400 13px var(--font-ui);color:var(--text-muted);';
+      tdInd.textContent = rec.industry;
+      tr.appendChild(tdInd);
+
+      /* Price */
+      var tdPrice = document.createElement('td');
+      tdPrice.style.cssText = 'font:500 14px var(--font-data);';
+      tdPrice.textContent = rec.close_price.toLocaleString('en', {minimumFractionDigits:2, maximumFractionDigits:2});
+      tr.appendChild(tdPrice);
+
+      /* Change */
+      var tdChg = document.createElement('td');
+      var chgSpan = document.createElement('span');
+      chgSpan.className = rec.change_pct > 0 ? 'up' : rec.change_pct < 0 ? 'down' : 'flat';
+      chgSpan.style.cssText = 'font:600 14px var(--font-data);';
+      chgSpan.textContent = (rec.change_pct > 0 ? '+' : '') + rec.change_pct + '%';
+      tdChg.appendChild(chgSpan);
+      tr.appendChild(tdChg);
+
+      /* Scores */
+      var scoreClass = rec.total_score >= 80 ? 'up' : rec.total_score >= 60 ? 'accent' : 'down';
+      var tdTotal = document.createElement('td');
+      tdTotal.className = 'score-cell ' + scoreClass;
+      tdTotal.textContent = rec.total_score;
+      tr.appendChild(tdTotal);
+
+      ['technical_score', 'fundamental_score', 'money_flow_score'].forEach(function(key) {
+        var td = document.createElement('td');
+        td.className = 'score-cell';
+        td.style.cssText = 'color:var(--text-secondary);font-size:13px;';
+        td.textContent = rec[key];
+        tr.appendChild(td);
+      });
+
+      /* Risk */
+      var tdRisk = document.createElement('td');
+      var riskSpan = document.createElement('span');
+      var riskClass = rec.risk_level === '\u4F4E' ? 'risk-tag--low' : rec.risk_level === '\u4E2D' ? 'risk-tag--mid' : 'risk-tag--high';
+      riskSpan.className = 'risk-tag ' + riskClass;
+      riskSpan.textContent = rec.risk_level;
+      tdRisk.appendChild(riskSpan);
+      tr.appendChild(tdRisk);
+
+      /* Advice */
+      var tdAdv = document.createElement('td');
+      tdAdv.style.textAlign = 'center';
+      var advSpan = document.createElement('span');
+      var advClass = rec.advice.indexOf('\u5F3A\u70C8') >= 0 || rec.advice.indexOf('\u504F\u591A') >= 0 ? 'score-badge--bullish'
+                   : rec.advice.indexOf('\u4E2D\u6027') >= 0 ? 'score-badge--neutral' : 'score-badge--bearish';
+      advSpan.className = 'score-badge ' + advClass;
+      advSpan.textContent = rec.advice;
+      tdAdv.appendChild(advSpan);
+      tr.appendChild(tdAdv);
+
+      /* Signals (only for non-compact) */
+      if (!isCompact) {
+        var tdSig = document.createElement('td');
+        tdSig.className = 'signals-cell';
+        (rec.bullish || []).slice(0, 2).forEach(function(s) {
+          var tag = document.createElement('span');
+          tag.className = 'signal-tag signal-tag--bullish';
+          tag.textContent = s;
+          tdSig.appendChild(tag);
+        });
+        (rec.bearish || []).slice(0, 1).forEach(function(s) {
+          var tag = document.createElement('span');
+          tag.className = 'signal-tag signal-tag--bearish';
+          tag.textContent = s;
+          tdSig.appendChild(tag);
+        });
+        tr.appendChild(tdSig);
+      }
+
+      tbody.appendChild(tr);
+    });
+    table.appendChild(tbody);
+    wrapper.appendChild(table);
+    return wrapper;
+  }
+
+  function buildPagination(container, totalPages) {
+    /* Prev */
+    var prevBtn = document.createElement('button');
+    prevBtn.className = 'page-btn';
+    prevBtn.textContent = '\u2039';
+    prevBtn.disabled = currentPage <= 1;
+    prevBtn.addEventListener('click', function() { if(currentPage > 1){ currentPage--; renderRecommendations(); } });
+    container.appendChild(prevBtn);
+
+    /* Page numbers */
+    for (var p = 1; p <= totalPages; p++) {
+      (function(page){
+        var btn = document.createElement('button');
+        btn.className = 'page-btn' + (page === currentPage ? ' page-btn--active' : '');
+        btn.textContent = page;
+        btn.addEventListener('click', function() { currentPage = page; renderRecommendations(); });
+        container.appendChild(btn);
+      })(p);
+    }
+
+    /* Info */
+    var info = document.createElement('span');
+    info.className = 'page-info';
+    var tier3Count = currentFiltered.slice(30).length;
+    info.textContent = currentPage + '/' + totalPages + ' (' + tier3Count + '\u53EA)';
+    container.appendChild(info);
+
+    /* Next */
+    var nextBtn = document.createElement('button');
+    nextBtn.className = 'page-btn';
+    nextBtn.textContent = '\u203A';
+    nextBtn.disabled = currentPage >= totalPages;
+    nextBtn.addEventListener('click', function() { if(currentPage < totalPages){ currentPage++; renderRecommendations(); } });
+    container.appendChild(nextBtn);
+  }
+
+  /* Initial render */
+  applyFilters();
+
+  /* ===== Heatmap (Treemap) ===== */
+  var heatmapChart = echarts.init(document.getElementById('heatmapChart'));
+  var hmData = sectorData.map(function(s) {
+    return {
+      name: s.name + '\n' + (s.change_pct > 0 ? '+' : '') + s.change_pct + '%',
+      value: Math.abs(s.amount),
+      change_pct: s.change_pct,
+      leader: s.leader,
+      amount: s.amount,
+      itemStyle: {
+        color: s.change_pct > 3 ? '#EF4444'
+             : s.change_pct > 1 ? '#DC2626'
+             : s.change_pct > 0 ? '#7F1D1D'
+             : s.change_pct === 0 ? '#374151'
+             : s.change_pct > -1 ? '#14532D'
+             : s.change_pct > -3 ? '#16A34A'
+             : '#22C55E'
+      }
+    };
+  });
+
+  heatmapChart.setOption({
+    tooltip: {
+      backgroundColor: '#1F2937',
+      borderColor: 'rgba(255,255,255,0.1)',
+      textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 13 },
+      formatter: function(p) {
+        var d = p.data;
+        var color = d.change_pct >= 0 ? '#EF4444' : '#22C55E';
+        return '<b>' + d.name.split('\n')[0] + '</b><br/>' +
+               '\u6DA8\u8DCC\u5E45: <span style="color:' + color + ';font-weight:600">' +
+               (d.change_pct > 0 ? '+' : '') + d.change_pct + '%</span><br/>' +
+               '\u6210\u4EA4\u989D: ' + d.amount + '\u4EBF<br/>' +
+               '\u9F99\u5934: ' + d.leader;
+      }
+    },
+    series: [{
+      type: 'treemap',
+      width: '100%', height: '100%',
+      roam: false,
+      nodeClick: false,
+      breadcrumb: { show: false },
+      itemStyle: { borderColor: '#0B0F19', borderWidth: 2, gapWidth: 2 },
+      label: {
+        show: true,
+        fontFamily: "'Fira Sans', 'PingFang SC', sans-serif",
+        fontSize: 13,
+        color: '#F1F5F9',
+        formatter: function(p) { return p.data.name; }
+      },
+      data: hmData
+    }]
+  });
+
+  /* ===== Sankey ===== */
+  var sankeyData = {{ sankey | safe }};
+  var sankeyChart = echarts.init(document.getElementById('sankeyChart'));
+
+  var nodeColors = {
+    '\u5317\u5411\u8D44\u91D1': '#3B82F6', '\u4E3B\u529B\u8D44\u91D1': '#F59E0B', '\u878D\u8D44\u4F59\u989D': '#A855F7',
+    '\u534A\u5BFC\u4F53': '#EF4444', '\u65B0\u80FD\u6E90\u8F66': '#EF4444', '\u767D\u9152': '#EF4444',
+    '\u4EBA\u5DE5\u667A\u80FD': '#EF4444', '\u533B\u836F\u751F\u7269': '#F97316', '\u5149\u4F0F': '#F97316',
+    '\u519B\u5DE5': '#F97316', '\u9502\u7535\u6C60': '#F97316'
+  };
+
+  sankeyChart.setOption({
+    tooltip: {
+      backgroundColor: '#1F2937',
+      borderColor: 'rgba(255,255,255,0.1)',
+      textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 13 },
+      formatter: function(p) {
+        if (p.dataType === 'edge') {
+          return p.data.source + ' \u2192 ' + p.data.target + '<br/>\u51C0\u6D41\u5165: <b>' + p.data.value + '\u4EBF</b>';
+        }
+        return p.data.name;
+      }
+    },
+    series: [{
+      type: 'sankey',
+      layout: 'none',
+      emphasis: { focus: 'adjacency' },
+      nodeWidth: 22,
+      nodeGap: 14,
+      orient: 'horizontal',
+      lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.35 },
+      label: {
+        color: '#F1F5F9',
+        fontFamily: "'Fira Sans', 'PingFang SC', sans-serif",
+        fontSize: 13
+      },
+      data: sankeyData.nodes.map(function(n) {
+        return {
+          name: n.name,
+          itemStyle: { color: nodeColors[n.name] || '#64748B', borderColor: 'transparent' }
+        };
+      }),
+      links: sankeyData.links
+    }]
+  });
+
+  /* ===== Distribution Ring Chart ===== */
+  var distChart = echarts.init(document.getElementById('distChart'));
+  var upCount = ALL_RECS.filter(function(r){ return r.change_pct > 0; }).length;
+  var downCount = ALL_RECS.filter(function(r){ return r.change_pct < 0; }).length;
+  var flatCount = ALL_RECS.length - upCount - downCount;
+
+  distChart.setOption({
+    tooltip: {
+      backgroundColor: '#1F2937',
+      borderColor: 'rgba(255,255,255,0.1)',
+      textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 13 },
+      formatter: function(p) {
+        return p.name + ': <b>' + p.value + '</b>\u53EA (' + p.percent.toFixed(1) + '%)';
+      }
+    },
+    legend: {
+      bottom: 0,
+      textStyle: { color: '#94A3B8', fontFamily: "'Fira Sans', sans-serif", fontSize: 12 }
+    },
+    series: [{
+      type: 'pie',
+      radius: ['42%', '68%'],
+      center: ['50%', '45%'],
+      avoidLabelOverlap: false,
+      itemStyle: { borderColor: '#111827', borderWidth: 2 },
+      label: {
+        show: true,
+        position: 'inside',
+        fontFamily: "'Fira Code', monospace",
+        fontSize: 13,
+        fontWeight: 600,
+        formatter: function(p){ return p.value; }
+      },
+      data: [
+        { name: '\u4E0A\u6DA8', value: upCount, itemStyle: { color: '#EF4444' } },
+        { name: '\u4E0B\u8DCC', value: downCount, itemStyle: { color: '#22C55E' } },
+        { name: '\u5E73\u76D8', value: flatCount, itemStyle: { color: '#64748B' } }
+      ],
+      animationDuration: 800
+    }]
+  });
+
+  /* ===== Sentiment Gauge ===== */
+  var gaugeChart = echarts.init(document.getElementById('gaugeChart'));
+  gaugeChart.setOption({
+    series: [{
+      type: 'gauge',
+      startAngle: 200,
+      endAngle: -20,
+      min: 0, max: 100,
+      radius: '95%',
+      itemStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+          { offset: 0, color: '#22C55E' },
+          { offset: 0.5, color: '#F59E0B' },
+          { offset: 1, color: '#EF4444' }
+        ])
+      },
+      progress: { show: true, width: 12 },
+      pointer: {
+        itemStyle: { color: '#F1F5F9' },
+        length: '60%', width: 5
+      },
+      axisLine: {
+        lineStyle: {
+          width: 12,
+          color: [[0.3, '#22C55E'], [0.7, '#F59E0B'], [1, '#EF4444']]
+        }
+      },
+      axisTick: { show: false },
+      splitLine: { show: false },
+      axisLabel: {
+        distance: 20, fontSize: 11,
+        color: '#64748B',
+        fontFamily: "'Fira Code', monospace",
+        formatter: function(v) {
+          if (v === 0) return '\u6781\u5EA6\u6050\u60E7';
+          if (v === 25) return '\u6050\u60E7';
+          if (v === 50) return '\u4E2D\u6027';
+          if (v === 75) return '\u8D2A\u5A6A';
+          if (v === 100) return '\u6781\u5EA6\u8D2A\u5A6A';
+          return '';
+        }
+      },
+      detail: {
+        valueAnimation: true,
+        formatter: function(v) { return v + '\n{{ sentiment.label }}'; },
+        fontSize: 22,
+        fontFamily: "'Fira Code', monospace",
+        fontWeight: 700,
+        color: '#F1F5F9',
+        offsetCenter: [0, '70%'],
+        lineHeight: 32
+      },
+      data: [{ value: {{ sentiment.fear_greed_index }} }],
+      animationDuration: 1500,
+      animationEasingUpdate: 'cubicOut'
+    }]
+  });
+
+  /* ===== Resize ===== */
+  window.addEventListener('resize', function() {
+    heatmapChart.resize();
+    sankeyChart.resize();
+    distChart.resize();
+    gaugeChart.resize();
+  });
+
+  /* Re-init Lucide icons */
+  lucide.createIcons();
+});
+</script>
+{% endblock %}

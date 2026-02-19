@@ -1,0 +1,573 @@
+{% extends "base.html" %}
+{% block title %}系统设置 - A股智选{% endblock %}
+{% block nav_settings %}navbar__link--active{% endblock %}
+
+{% block extra_style %}
+<style>
+  /* ===== Toggle Switch ===== */
+  .switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background: #374151; border-radius: 24px;
+    transition: 0.3s;
+  }
+  .switch .slider:before {
+    content: ""; position: absolute;
+    height: 18px; width: 18px;
+    left: 3px; bottom: 3px;
+    background: #F1F5F9; border-radius: 50%;
+    transition: 0.3s;
+  }
+  .switch input:checked + .slider { background: #3B82F6; }
+  .switch input:checked + .slider:before { transform: translateX(20px); }
+
+  /* ===== Range Slider ===== */
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 6px;
+    background: #374151; border-radius: 3px;
+    outline: none; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 18px; height: 18px;
+    background: #3B82F6; border-radius: 50%;
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(59,130,246,0.4);
+  }
+  input[type=range]::-moz-range-thumb {
+    width: 18px; height: 18px;
+    background: #3B82F6; border-radius: 50%;
+    cursor: pointer; border: none;
+    box-shadow: 0 0 6px rgba(59,130,246,0.4);
+  }
+
+  /* ===== Settings Layout ===== */
+  .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+
+  /* ===== Weight Slider Row ===== */
+  .weight-row {
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .weight-row:last-child { border-bottom: none; }
+  .weight-row__label {
+    font: 500 14px var(--font-ui);
+    color: var(--text-primary);
+    min-width: 90px;
+  }
+  .weight-row__slider { flex: 1; }
+  .weight-row__value {
+    font: 600 16px var(--font-data);
+    color: var(--color-primary);
+    min-width: 48px;
+    text-align: right;
+  }
+  .weight-total {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 0; margin-top: 8px;
+    border-top: 1px solid var(--border-default);
+  }
+  .weight-total__label {
+    font: 500 14px var(--font-ui);
+    color: var(--text-secondary);
+  }
+  .weight-total__value {
+    font: 700 18px var(--font-data);
+  }
+  .weight-total__warning {
+    font: 400 12px var(--font-ui);
+    color: var(--color-warning);
+    margin-top: 6px;
+    display: none;
+  }
+  .weight-total__warning.visible { display: block; }
+  .weight-chart-wrap {
+    display: flex; align-items: center; justify-content: center;
+    padding-top: 8px;
+  }
+
+  /* ===== Filter Row ===== */
+  .filter-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .filter-row:last-child { border-bottom: none; }
+  .filter-row__label {
+    font: 400 14px var(--font-ui);
+    color: var(--text-primary);
+  }
+  .filter-row__desc {
+    font: 400 12px var(--font-ui);
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .filter-row__input-wrap {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .filter-input {
+    width: 80px; padding: 6px 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font: 400 14px var(--font-data);
+    text-align: right;
+    outline: none;
+    transition: border-color var(--transition-fast);
+  }
+  .filter-input:focus { border-color: var(--color-primary); }
+  .filter-input__suffix {
+    font: 400 13px var(--font-ui);
+    color: var(--text-muted);
+  }
+
+  /* ===== Operations ===== */
+  .ops-row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .ops-row:last-child { border-bottom: none; }
+  .ops-row__info {
+    flex: 1;
+  }
+  .ops-row__title {
+    font: 500 14px var(--font-ui);
+    color: var(--text-primary);
+  }
+  .ops-row__desc {
+    font: 400 12px var(--font-ui);
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+  .ops-feedback {
+    font: 400 13px var(--font-ui);
+    color: var(--color-down);
+    margin-left: 12px;
+    opacity: 0;
+    transition: opacity var(--transition-normal);
+  }
+  .ops-feedback.show { opacity: 1; }
+  .ops-schedule {
+    display: flex; flex-direction: column; gap: 8px;
+    padding: 14px 0;
+  }
+  .ops-schedule__item {
+    display: flex; align-items: center; gap: 8px;
+    font: 400 13px var(--font-ui);
+    color: var(--text-secondary);
+  }
+  .ops-schedule__item svg { width: 14px; height: 14px; color: var(--text-muted); }
+  .ops-schedule__value {
+    font: 500 13px var(--font-data);
+    color: var(--text-primary);
+  }
+
+  /* ===== Data Status ===== */
+  .status-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+  .status-row:last-child { border-bottom: none; }
+  .status-row__left {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .status-row__name {
+    font: 500 14px var(--font-ui);
+    color: var(--text-primary);
+  }
+  .status-row__right {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .status-row__badge {
+    display: inline-flex; align-items: center;
+    padding: 2px 10px; border-radius: 12px;
+    font: 500 12px var(--font-ui);
+  }
+  .status-row__badge--ok { background: rgba(34,197,94,0.12); color: #4ADE80; }
+  .status-row__badge--warn { background: rgba(249,115,22,0.12); color: #FB923C; }
+  .status-row__time {
+    font: 400 12px var(--font-data);
+    color: var(--text-muted);
+  }
+
+  /* ===== Loading Spinner ===== */
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.2);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 6px;
+  }
+
+  /* ===== Responsive ===== */
+  @media (max-width: 1024px) {
+    .settings-grid { grid-template-columns: 1fr; }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<section class="section">
+  <div class="section__header">
+    <div class="section__title"><i data-lucide="settings"></i> 系统设置</div>
+  </div>
+</section>
+
+<div class="settings-grid">
+  <!-- LEFT COLUMN -->
+  <div>
+    <!-- Section 1: Weight Configuration -->
+    <section class="section">
+      <div class="card">
+        <div class="card__title"><i data-lucide="sliders-horizontal"></i> 评分权重配置</div>
+
+        <div class="weight-row">
+          <span class="weight-row__label">技术面</span>
+          <input type="range" class="weight-row__slider" id="weight_technical"
+                 min="0" max="60" step="5" value="{{ weights.technical }}">
+          <span class="weight-row__value" id="val_technical">{{ weights.technical }}%</span>
+        </div>
+        <div class="weight-row">
+          <span class="weight-row__label">基本面</span>
+          <input type="range" class="weight-row__slider" id="weight_fundamental"
+                 min="0" max="60" step="5" value="{{ weights.fundamental }}">
+          <span class="weight-row__value" id="val_fundamental">{{ weights.fundamental }}%</span>
+        </div>
+        <div class="weight-row">
+          <span class="weight-row__label">资金面</span>
+          <input type="range" class="weight-row__slider" id="weight_money_flow"
+                 min="0" max="60" step="5" value="{{ weights.money_flow }}">
+          <span class="weight-row__value" id="val_money_flow">{{ weights.money_flow }}%</span>
+        </div>
+        <div class="weight-row">
+          <span class="weight-row__label">市场情绪</span>
+          <input type="range" class="weight-row__slider" id="weight_sentiment"
+                 min="0" max="60" step="5" value="{{ weights.sentiment }}">
+          <span class="weight-row__value" id="val_sentiment">{{ weights.sentiment }}%</span>
+        </div>
+
+        <div class="weight-total">
+          <span class="weight-total__label">合计</span>
+          <span class="weight-total__value" id="weightTotalValue" style="color: var(--color-down);">100%</span>
+        </div>
+        <div class="weight-total__warning" id="weightWarning">
+          权重合计必须为 100%，当前不等于 100%
+        </div>
+
+        <div class="weight-chart-wrap">
+          <div id="weightChart" style="width:200px;height:200px;"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 2: Filter Rules -->
+    <section class="section">
+      <div class="card">
+        <div class="card__title"><i data-lucide="filter"></i> 过滤规则</div>
+
+        <!-- Toggle Filters -->
+        <div class="filter-row">
+          <div>
+            <div class="filter-row__label">排除 ST/*ST 股</div>
+            <div class="filter-row__desc">自动过滤风险警示股票</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="filter_exclude_st" {{ 'checked' if filters.exclude_st else '' }}>
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="filter-row">
+          <div>
+            <div class="filter-row__label">排除涨跌停</div>
+            <div class="filter-row__desc">过滤当日涨停/跌停股票</div>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="filter_exclude_limit" {{ 'checked' if filters.exclude_limit else '' }}>
+            <span class="slider"></span>
+          </label>
+        </div>
+
+        <!-- Threshold Filters -->
+        <div class="filter-row">
+          <div>
+            <div class="filter-row__label">最低市值门槛</div>
+            <div class="filter-row__desc">过滤市值低于阈值的小盘股</div>
+          </div>
+          <div class="filter-row__input-wrap">
+            <input type="number" class="filter-input" id="filter_min_market_cap"
+                   value="{{ filters.min_market_cap }}" min="0" step="5">
+            <span class="filter-input__suffix">亿</span>
+          </div>
+        </div>
+        <div class="filter-row">
+          <div>
+            <div class="filter-row__label">最高换手率</div>
+            <div class="filter-row__desc">过滤换手率过高的异常股票</div>
+          </div>
+          <div class="filter-row__input-wrap">
+            <input type="number" class="filter-input" id="filter_max_turnover"
+                   value="{{ filters.max_turnover }}" min="0" step="1">
+            <span class="filter-input__suffix">%</span>
+          </div>
+        </div>
+        <div class="filter-row">
+          <div>
+            <div class="filter-row__label">最低上市天数</div>
+            <div class="filter-row__desc">过滤新上市股票避免高波动</div>
+          </div>
+          <div class="filter-row__input-wrap">
+            <input type="number" class="filter-input" id="filter_min_days_listed"
+                   value="{{ filters.min_days_listed }}" min="0" step="10">
+            <span class="filter-input__suffix">天</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- RIGHT COLUMN -->
+  <div>
+    <!-- Section 3: System Operations -->
+    <section class="section">
+      <div class="card">
+        <div class="card__title"><i data-lucide="terminal"></i> 系统操作</div>
+
+        <div class="ops-row">
+          <div class="ops-row__info">
+            <div class="ops-row__title">手动触发分析</div>
+            <div class="ops-row__desc">立即运行全量股票评分分析</div>
+          </div>
+          <button class="btn btn-primary" id="btnTriggerAnalysis" onclick="triggerAnalysis()">
+            <i data-lucide="play"></i> 开始分析
+          </button>
+          <span class="ops-feedback" id="analysisFeedback"></span>
+        </div>
+
+        <div class="ops-row">
+          <div class="ops-row__info">
+            <div class="ops-row__title">清理历史数据</div>
+            <div class="ops-row__desc">删除 90 天前的推荐数据与缓存</div>
+          </div>
+          <button class="btn btn-secondary" id="btnCleanup" onclick="cleanupData()">
+            <i data-lucide="trash-2"></i> 清理
+          </button>
+          <span class="ops-feedback" id="cleanupFeedback"></span>
+        </div>
+
+        <div class="ops-schedule">
+          <div class="ops-schedule__item">
+            <i data-lucide="clock"></i>
+            <span>最后更新:</span>
+            <span class="ops-schedule__value">{{ today }} 16:30:00</span>
+          </div>
+          <div class="ops-schedule__item">
+            <i data-lucide="calendar-clock"></i>
+            <span>下次分析:</span>
+            <span class="ops-schedule__value">2026-02-21 15:30:00</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Section 4: Data Status -->
+    <section class="section">
+      <div class="card">
+        <div class="card__title"><i data-lucide="database"></i> 数据状态</div>
+
+        <div class="status-row">
+          <div class="status-row__left">
+            <span class="status-row__name">日线行情</span>
+          </div>
+          <div class="status-row__right">
+            <span class="status-row__badge status-row__badge--ok">正常</span>
+            <span class="status-row__time">最后更新 16:02</span>
+          </div>
+        </div>
+        <div class="status-row">
+          <div class="status-row__left">
+            <span class="status-row__name">财务数据</span>
+          </div>
+          <div class="status-row__right">
+            <span class="status-row__badge status-row__badge--ok">正常</span>
+            <span class="status-row__time">最后更新 02-15</span>
+          </div>
+        </div>
+        <div class="status-row">
+          <div class="status-row__left">
+            <span class="status-row__name">资金流向</span>
+          </div>
+          <div class="status-row__right">
+            <span class="status-row__badge status-row__badge--ok">正常</span>
+            <span class="status-row__time">最后更新 16:15</span>
+          </div>
+        </div>
+        <div class="status-row">
+          <div class="status-row__left">
+            <span class="status-row__name">板块数据</span>
+          </div>
+          <div class="status-row__right">
+            <span class="status-row__badge status-row__badge--ok">正常</span>
+            <span class="status-row__time">最后更新 16:05</span>
+          </div>
+        </div>
+        <div class="status-row">
+          <div class="status-row__left">
+            <span class="status-row__name">新闻热点</span>
+          </div>
+          <div class="status-row__right">
+            <span class="status-row__badge status-row__badge--warn">部分异常</span>
+            <span class="status-row__time">最后更新 15:45</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+
+  // ===== Weight Chart (Donut) =====
+  var weightChart = echarts.init(document.getElementById('weightChart'));
+  var weightKeys = ['technical', 'fundamental', 'money_flow', 'sentiment'];
+  var weightLabels = ['技术面', '基本面', '资金面', '市场情绪'];
+  var weightColors = ['#3B82F6', '#22C55E', '#F59E0B', '#A855F7'];
+
+  function getWeightValues() {
+    return weightKeys.map(function(key) {
+      return parseInt(document.getElementById('weight_' + key).value) || 0;
+    });
+  }
+
+  function updateWeightChart() {
+    var values = getWeightValues();
+    var total = values.reduce(function(a, b) { return a + b; }, 0);
+
+    // Update total display
+    var totalEl = document.getElementById('weightTotalValue');
+    var warningEl = document.getElementById('weightWarning');
+    totalEl.textContent = total + '%';
+
+    if (total === 100) {
+      totalEl.style.color = 'var(--color-down)';
+      warningEl.classList.remove('visible');
+    } else {
+      totalEl.style.color = 'var(--color-warning)';
+      warningEl.classList.add('visible');
+    }
+
+    // Update chart
+    var chartData = weightLabels.map(function(label, idx) {
+      return { name: label, value: values[idx] };
+    });
+
+    weightChart.setOption({
+      tooltip: {
+        backgroundColor: '#1F2937',
+        borderColor: 'rgba(255,255,255,0.1)',
+        textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 13 },
+        formatter: function(p) {
+          return p.name + ': ' + p.value + '%';
+        }
+      },
+      series: [{
+        type: 'pie',
+        radius: ['55%', '80%'],
+        center: ['50%', '50%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderColor: '#111827',
+          borderWidth: 2
+        },
+        label: { show: false },
+        data: chartData,
+        color: weightColors
+      }]
+    });
+  }
+
+  // Bind slider events
+  weightKeys.forEach(function(key) {
+    var slider = document.getElementById('weight_' + key);
+    var valDisplay = document.getElementById('val_' + key);
+    slider.addEventListener('input', function() {
+      valDisplay.textContent = slider.value + '%';
+      updateWeightChart();
+    });
+  });
+
+  // Initial render
+  updateWeightChart();
+
+  // ===== Helper: create feedback content =====
+  function setFeedbackLoading(el, text) {
+    el.textContent = '';
+    var spinnerSpan = document.createElement('span');
+    spinnerSpan.className = 'spinner';
+    el.appendChild(spinnerSpan);
+    el.appendChild(document.createTextNode(' ' + text));
+    el.style.color = 'var(--color-primary)';
+    el.classList.add('show');
+  }
+
+  function setFeedbackDone(el, text) {
+    el.textContent = text;
+    el.style.color = 'var(--color-down)';
+    el.classList.add('show');
+  }
+
+  // ===== Trigger Analysis =====
+  window.triggerAnalysis = function() {
+    var btn = document.getElementById('btnTriggerAnalysis');
+    var feedback = document.getElementById('analysisFeedback');
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    setFeedbackLoading(feedback, '分析任务已提交...');
+
+    setTimeout(function() {
+      setFeedbackDone(feedback, '分析完成');
+      btn.disabled = false;
+      btn.style.opacity = '1';
+    }, 2000);
+  };
+
+  // ===== Cleanup Data =====
+  window.cleanupData = function() {
+    if (!confirm('确认清理90天前的历史数据？此操作不可撤销。')) return;
+    var btn = document.getElementById('btnCleanup');
+    var feedback = document.getElementById('cleanupFeedback');
+    btn.disabled = true;
+    btn.style.opacity = '0.6';
+    setFeedbackLoading(feedback, '清理中...');
+
+    setTimeout(function() {
+      setFeedbackDone(feedback, '已清理90天前数据');
+      btn.disabled = false;
+      btn.style.opacity = '1';
+    }, 1500);
+  };
+
+  // ===== Resize =====
+  window.addEventListener('resize', function() {
+    weightChart.resize();
+  });
+
+  // Re-init Lucide icons
+  lucide.createIcons();
+});
+</script>
+{% endblock %}
