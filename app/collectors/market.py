@@ -1,0 +1,105 @@
+"""行情数据采集: K线 + 实时快照 + 涨停池"""
+
+import logging
+from datetime import date, datetime, timedelta
+
+import pandas as pd
+from sqlalchemy.orm import Session
+
+from app.collectors.base import BaseCollector, stock_market
+from app.models.database import StockDaily
+
+logger = logging.getLogger(__name__)
+
+_KLINE_COL_MAP = {
+    "日期": "trade_date",
+    "开盘": "open",
+    "收盘": "close",
+    "最高": "high",
+    "最低": "low",
+    "成交量": "volume",
+    "成交额": "amount",
+    "振幅": "amplitude",
+    "涨跌幅": "change_pct",
+    "换手率": "turnover_rate",
+}
+
+
+class MarketCollector(BaseCollector):
+
+    def _map_kline_row(self, code: str, name: str, row: dict) -> dict:
+        mapped = {"stock_code": code, "stock_name": name}
+        for cn_col, en_col in _KLINE_COL_MAP.items():
+            val = row.get(cn_col)
+            if en_col == "trade_date":
+                if isinstance(val, str):
+                    val = datetime.strptime(val, "%Y-%m-%d").date()
+                elif hasattr(val, "date") and not isinstance(val, date):
+                    val = val.date()
+            mapped[en_col] = val
+        return mapped
+
+    def _map_spot_row(self, row: dict) -> dict:
+        return {
+            "code": str(row.get("代码", "")),
+            "name": str(row.get("名称", "")),
+            "price": row.get("最新价"),
+            "change_pct": row.get("涨跌幅"),
+            "volume": row.get("成交量"),
+            "amount": row.get("成交额"),
+            "turnover_rate": row.get("换手率"),
+            "pe_ttm": row.get("市盈率-动态"),
+            "pb": row.get("市净率"),
+            "market_cap": row.get("总市值"),
+            "float_market_cap": row.get("流通市值"),
+            "volume_ratio": row.get("量比"),
+        }
+
+    def collect_kline(self, code: str, name: str, session: Session,
+                      days: int = 250) -> int:
+        end_date = datetime.now().strftime("%Y%m%d")
+        start_date = (datetime.now() - timedelta(days=days + 30)).strftime("%Y%m%d")
+
+        df = self._call_ak(
+            "stock_zh_a_hist",
+            symbol=code, period="daily",
+            start_date=start_date, end_date=end_date,
+            adjust="qfq",
+        )
+        if df is None or df.empty:
+            logger.warning(f"[{code}] K线数据为空")
+            return 0
+
+        count = 0
+        for _, row in df.iterrows():
+            mapped = self._map_kline_row(code, name, row.to_dict())
+            exists = session.query(StockDaily).filter_by(
+                stock_code=code, trade_date=mapped["trade_date"]
+            ).first()
+            if exists:
+                continue
+            session.add(StockDaily(**mapped))
+            count += 1
+
+        session.commit()
+        logger.info(f"[{code} {name}] 新增 {count} 条K线")
+        return count
+
+    def collect_snapshot(self) -> pd.DataFrame:
+        df = self._call_ak("stock_zh_a_spot_em")
+        return df
+
+    def collect_zt_pool(self, trade_date: str) -> pd.DataFrame:
+        df = self._call_ak("stock_zt_pool_em", date=trade_date)
+        return df if df is not None else pd.DataFrame()
+
+    def collect(self, stock_list: list[tuple[str, str]], session: Session):
+        total = 0
+        for code, name in stock_list:
+            try:
+                n = self.collect_kline(code, name, session)
+                total += n
+            except Exception as e:
+                logger.error(f"[{code}] K线采集失败: {e}")
+        logger.info(f"K线采集完成, 共新增 {total} 条")
+        return total
