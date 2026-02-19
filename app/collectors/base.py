@@ -1,0 +1,49 @@
+"""采集基类 - 限速、重试、日志"""
+
+import time
+import logging
+import akshare as ak
+
+logger = logging.getLogger(__name__)
+
+
+class BaseCollector:
+
+    def __init__(self, delay: float = 0.4, retry: int = 3):
+        self.delay = delay
+        self.retry = retry
+        self._last_call = 0.0
+
+    def _rate_limit(self):
+        elapsed = time.time() - self._last_call
+        if elapsed < self.delay:
+            time.sleep(self.delay - elapsed)
+        self._last_call = time.time()
+
+    def _call_ak_raw(self, func_name: str, **kwargs):
+        fn = getattr(ak, func_name)
+        return fn(**kwargs)
+
+    def _call_ak(self, func_name: str, **kwargs):
+        last_err = None
+        for attempt in range(1, self.retry + 1):
+            try:
+                self._rate_limit()
+                result = self._call_ak_raw(func_name, **kwargs)
+                logger.debug(f"[{func_name}] 成功 (第{attempt}次)")
+                return result
+            except Exception as e:
+                last_err = e
+                logger.warning(f"[{func_name}] 第{attempt}次失败: {e}")
+                if attempt < self.retry:
+                    time.sleep(1.0 * attempt)
+        raise last_err
+
+    def collect(self):
+        raise NotImplementedError
+
+
+def stock_market(code: str) -> str:
+    if code.startswith(("6", "9")):
+        return "sh"
+    return "sz"
