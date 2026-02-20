@@ -1,7 +1,8 @@
-"""盘后定时任务: 采集 -> 计算 -> 评分 -> 写入"""
+"""盘后定时任务: 采集 -> 计算 -> 评分 -> 写入 -> 回测"""
 
 import logging
-from datetime import datetime
+import threading
+from datetime import datetime, timedelta
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -18,19 +19,70 @@ from app.analyzers.money_flow import MoneyFlowAnalyzer
 from app.analyzers.sentiment import SentimentAnalyzer
 from app.analyzers.scorer import CompositeScorer
 from app.models.database import (
-    StockDaily, StockFundamental, StockMoneyFlow, DailyRecommendation,
+    StockDaily, StockTechnical, StockFundamental,
+    StockMoneyFlow, DailyRecommendation, RecommendationResult,
 )
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Pipeline 并发控制
+# ---------------------------------------------------------------------------
+
+_pipeline_lock = threading.Lock()
+_pipeline_status = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "last_error": None,
+    "phase": None,
+    "progress": "",
+}
+
+
+def get_pipeline_status() -> dict:
+    """返回 pipeline 当前状态（线程安全）"""
+    return dict(_pipeline_status)
+
 
 def run_daily_pipeline():
-    """每日盘后完整流水线"""
+    """每日盘后完整流水线（带并发锁）"""
+    if not _pipeline_lock.acquire(blocking=False):
+        logger.warning("Pipeline 已在运行中，跳过本次触发")
+        return
+
+    try:
+        _pipeline_status["running"] = True
+        _pipeline_status["started_at"] = datetime.now().isoformat()
+        _pipeline_status["last_error"] = None
+        _pipeline_status["phase"] = "starting"
+
+        _run_pipeline_inner()
+
+        _pipeline_status["last_error"] = None
+        _pipeline_status["phase"] = "completed"
+    except Exception as e:
+        _pipeline_status["last_error"] = str(e)
+        _pipeline_status["phase"] = "failed"
+        logger.error(f"流水线异常: {e}")
+    finally:
+        _pipeline_status["running"] = False
+        _pipeline_status["finished_at"] = datetime.now().isoformat()
+        _pipeline_lock.release()
+
+
+# ---------------------------------------------------------------------------
+# Pipeline 核心逻辑
+# ---------------------------------------------------------------------------
+
+def _run_pipeline_inner():
+    """实际的 Pipeline 逻辑"""
     logger.info("===== 每日流水线启动 =====")
     session = get_session()
 
     try:
         # --- Phase 1: 快照 + 过滤 ---
+        _pipeline_status["phase"] = "snapshot"
         logger.info("[1/4] 获取全A快照并过滤...")
         mc = MarketCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
 
@@ -43,12 +95,14 @@ def run_daily_pipeline():
         pool = _filter_stock_pool(snapshot_df)
         stock_list = [(r["code"], r["name"]) for r in pool]
         logger.info(f"过滤后股票池: {len(stock_list)} 只")
+        _pipeline_status["progress"] = f"股票池 {len(stock_list)} 只"
 
         if not stock_list:
             logger.warning("过滤后股票池为空，跳过")
             return
 
         # --- Phase 2: 数据采集 ---
+        _pipeline_status["phase"] = "collecting"
         logger.info("[2/4] 数据采集...")
         mc.collect(stock_list, session)
 
@@ -63,7 +117,7 @@ def run_daily_pipeline():
 
         # Enrich fundamentals with spot data
         if snapshot_df is not None and not snapshot_df.empty:
-            for code, name in stock_list[:50]:  # Top 50 only to save time
+            for code, name in stock_list[:50]:
                 try:
                     spot_row = snapshot_df[snapshot_df["代码"] == code]
                     if not spot_row.empty:
@@ -72,6 +126,7 @@ def run_daily_pipeline():
                     pass
 
         # --- Phase 3: 评分 ---
+        _pipeline_status["phase"] = "scoring"
         logger.info("[3/4] 评分计算...")
         from app.collectors.industry import get_industry_map
         industry_map = get_industry_map()
@@ -84,10 +139,10 @@ def run_daily_pipeline():
 
         trade_date = datetime.now().date()
         results = []
+        scored_count = 0
 
         for code, name in stock_list:
             try:
-                # K-line data
                 kline_rows = session.query(StockDaily).filter_by(
                     stock_code=code
                 ).order_by(StockDaily.trade_date).all()
@@ -104,6 +159,9 @@ def run_daily_pipeline():
                 } for r in kline_rows])
 
                 tech_result = tech_analyzer.score(kline_df)
+
+                # 写入 StockTechnical 表（持久化指标）
+                _save_technical_indicators(tech_analyzer, kline_df, code, trade_date, session)
 
                 # Fundamentals
                 fund_row = session.query(StockFundamental).filter_by(
@@ -153,11 +211,15 @@ def run_daily_pipeline():
                 composite["close_price"] = float(kline_df.iloc[-1]["close"])
                 composite["change_pct"] = float(kline_df.iloc[-1].get("change_pct", 0) or 0)
                 results.append(composite)
+                scored_count += 1
 
             except Exception as e:
                 logger.error(f"[{code}] 评分失败: {e}")
 
+        _pipeline_status["progress"] = f"评分完成 {scored_count} 只"
+
         # --- Phase 4: 排名 + 写入 ---
+        _pipeline_status["phase"] = "writing"
         logger.info(f"[4/4] 排名并写入... ({len(results)} 只)")
         results.sort(key=lambda x: x["total_score"], reverse=True)
         top_n = min(settings.stock_pool_size, len(results))
@@ -186,29 +248,165 @@ def run_daily_pipeline():
             session.add(rec)
 
         session.commit()
+        logger.info(f"写入 {top_n} 条推荐完成")
+
+        # --- Phase 5: 回测历史推荐 ---
+        _pipeline_status["phase"] = "backfill"
+        try:
+            backfill_results(session)
+        except Exception as e:
+            logger.warning(f"回测回填失败 (非致命): {e}")
+
+        # 清除缓存
+        try:
+            from app.cache import cache
+            cache.invalidate()
+            logger.info("缓存已清除")
+        except Exception:
+            pass
+
         logger.info(f"===== 流水线完成! 写入 {top_n} 条推荐 =====")
 
     except Exception as e:
         logger.error(f"流水线异常: {e}")
         session.rollback()
+        raise
     finally:
         session.close()
 
+
+# ---------------------------------------------------------------------------
+# 持久化技术指标
+# ---------------------------------------------------------------------------
+
+def _save_technical_indicators(analyzer: TechnicalAnalyzer, kline_df: pd.DataFrame,
+                                code: str, trade_date, session: Session):
+    """将最新技术指标写入 StockTechnical 表"""
+    try:
+        existing = session.query(StockTechnical).filter_by(
+            stock_code=code, trade_date=trade_date
+        ).first()
+        if existing:
+            return  # 已存在，跳过
+
+        indicators = analyzer.get_latest_indicators(kline_df)
+        tech_record = StockTechnical(
+            stock_code=code,
+            trade_date=trade_date,
+            **indicators,
+        )
+        session.add(tech_record)
+        session.flush()
+    except Exception as e:
+        logger.debug(f"[{code}] 技术指标写入失败: {e}")
+
+
+# ---------------------------------------------------------------------------
+# 回测: 回填历史推荐的真实收益
+# ---------------------------------------------------------------------------
+
+def backfill_results(session: Session):
+    """回填过去 1-7 天推荐记录的真实收益率
+
+    逻辑:
+    1. 查找过去 7 天内还没有回测数据的推荐记录
+    2. 从 StockDaily 获取推荐日后 T+1/T+3/T+5 的收盘价
+    3. 计算收益率并写入 RecommendationResult
+    """
+    today = datetime.now().date()
+    lookback_start = today - timedelta(days=10)
+
+    # 找到有推荐但还没有回测记录的日期
+    from sqlalchemy import func, and_
+    rec_dates = session.query(DailyRecommendation.trade_date).filter(
+        DailyRecommendation.trade_date.between(lookback_start, today - timedelta(days=1))
+    ).distinct().all()
+
+    if not rec_dates:
+        logger.info("无需回测的推荐记录")
+        return
+
+    filled_count = 0
+    for (rec_date,) in rec_dates:
+        recs = session.query(DailyRecommendation).filter_by(trade_date=rec_date).all()
+
+        for rec in recs:
+            # 检查是否已有回测记录且已完成
+            existing = session.query(RecommendationResult).filter_by(
+                trade_date=rec_date, stock_code=rec.stock_code
+            ).first()
+
+            if existing and existing.close_t5 is not None:
+                continue  # T+5 已有数据，完全跳过
+
+            # 获取该股票推荐日之后的 K-line 数据
+            future_bars = session.query(StockDaily).filter(
+                and_(
+                    StockDaily.stock_code == rec.stock_code,
+                    StockDaily.trade_date > rec_date,
+                )
+            ).order_by(StockDaily.trade_date).limit(5).all()
+
+            if not future_bars:
+                continue
+
+            close_t1 = future_bars[0].close if len(future_bars) >= 1 else None
+            close_t3 = future_bars[2].close if len(future_bars) >= 3 else None
+            close_t5 = future_bars[4].close if len(future_bars) >= 5 else None
+
+            base_price = rec.close_price or 0
+            if base_price <= 0:
+                continue
+
+            return_t1 = round((close_t1 - base_price) / base_price * 100, 2) if close_t1 else None
+            return_t3 = round((close_t3 - base_price) / base_price * 100, 2) if close_t3 else None
+            return_t5 = round((close_t5 - base_price) / base_price * 100, 2) if close_t5 else None
+
+            if existing:
+                # 更新已有记录
+                existing.close_t1 = close_t1 or existing.close_t1
+                existing.close_t3 = close_t3 or existing.close_t3
+                existing.close_t5 = close_t5 or existing.close_t5
+                existing.return_t1 = return_t1 if return_t1 is not None else existing.return_t1
+                existing.return_t3 = return_t3 if return_t3 is not None else existing.return_t3
+                existing.return_t5 = return_t5 if return_t5 is not None else existing.return_t5
+                existing.verified_at = datetime.now()
+            else:
+                # 创建新记录
+                result = RecommendationResult(
+                    trade_date=rec_date,
+                    stock_code=rec.stock_code,
+                    stock_name=rec.stock_name,
+                    recommend_score=rec.total_score,
+                    close_at_recommend=rec.close_price,
+                    close_t1=close_t1,
+                    close_t3=close_t3,
+                    close_t5=close_t5,
+                    return_t1=return_t1,
+                    return_t3=return_t3,
+                    return_t5=return_t5,
+                    verified_at=datetime.now(),
+                )
+                session.add(result)
+                filled_count += 1
+
+    session.commit()
+    logger.info(f"回测回填完成: 新增 {filled_count} 条记录")
+
+
+# ---------------------------------------------------------------------------
+# 辅助函数
+# ---------------------------------------------------------------------------
 
 def _filter_stock_pool(df) -> list[dict]:
     """过滤股票池 (PRD 4.6)"""
     if df is None or df.empty:
         return []
     filtered = df.copy()
-    # Exclude ST
     filtered = filtered[~filtered["名称"].str.contains("ST", na=False)]
-    # Exclude suspended (price=0 or NaN)
     filtered = filtered[filtered["最新价"] > 0]
-    # Market cap > 20B yuan
     filtered = filtered[filtered["总市值"] > 20e8]
-    # Turnover < 20%
     filtered = filtered[filtered["换手率"] < 20]
-    # Change < 9.5% (exclude limit-up/down)
     filtered = filtered[filtered["涨跌幅"].abs() < 9.5]
 
     return [{"code": str(r["代码"]), "name": str(r["名称"])}
@@ -219,7 +417,6 @@ def _get_industry(code: str, snapshot_df) -> str:
     """Get industry from snapshot (simplified)"""
     if snapshot_df is None or snapshot_df.empty:
         return ""
-    # snapshot doesn't have industry column directly, return empty
     return ""
 
 

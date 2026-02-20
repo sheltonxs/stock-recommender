@@ -138,3 +138,27 @@ class DailyRecommendation(Base):
     analysis_text = Column(Text)
     signals_json = Column(Text)
     created_at = Column(DateTime, default=datetime.now)
+
+
+class RecommendationResult(Base):
+    """推荐结果回测表 - 记录推荐股票的真实 T+1/T+3/T+5 收益"""
+    __tablename__ = "recommendation_result"
+    __table_args__ = (
+        UniqueConstraint("trade_date", "stock_code", name="uq_result_date_code"),
+        Index("ix_result_date", "trade_date"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    trade_date = Column(Date, nullable=False)
+    stock_code = Column(String(10), nullable=False)
+    stock_name = Column(String(50))
+    recommend_score = Column(Float)
+    close_at_recommend = Column(Float)
+    close_t1 = Column(Float)
+    close_t3 = Column(Float)
+    close_t5 = Column(Float)
+    return_t1 = Column(Float)
+    return_t3 = Column(Float)
+    return_t5 = Column(Float)
+    verified_at = Column(DateTime)
+    created_at = Column(DateTime, default=datetime.now)
