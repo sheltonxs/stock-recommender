@@ -73,6 +73,9 @@ def run_daily_pipeline():
 
         # --- Phase 3: 评分 ---
         logger.info("[3/4] 评分计算...")
+        from app.collectors.industry import get_industry_map
+        industry_map = get_industry_map()
+        logger.info(f"行业映射: {len(industry_map)} 只")
         tech_analyzer = TechnicalAnalyzer()
         fund_analyzer = FundamentalAnalyzer()
         money_analyzer = MoneyFlowAnalyzer()
@@ -133,7 +136,7 @@ def run_daily_pipeline():
                 money_result = money_analyzer.score(mf_dicts)
 
                 # Sentiment
-                industry = _get_industry(code, snapshot_df)
+                industry = industry_map.get(code, _get_industry(code, snapshot_df))
                 sent_result = sent_analyzer.score(
                     code, industry,
                     sentiment_data.get("sector_flow", pd.DataFrame()),

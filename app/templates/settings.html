@@ -5,10 +5,12 @@
 {% block extra_style %}
 <style>
   /* ===== Toggle Switch ===== */
-  .switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; }
-  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch { position: relative; display: inline-block; width: 44px; height: 24px; flex-shrink: 0; overflow: hidden; z-index: 0; }
+  .switch input { opacity: 0; width: 0; height: 0; position: absolute; }
   .switch .slider {
-    position: absolute; cursor: pointer; inset: 0;
+    position: absolute; cursor: pointer;
+    top: 0; left: 0; right: 0; bottom: 0;
+    width: 44px; height: 24px;
     background: #374151; border-radius: 24px;
     transition: 0.3s;
   }
@@ -45,6 +47,7 @@
 
   /* ===== Settings Layout ===== */
   .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .settings-grid .card { overflow: hidden; }
 
   /* ===== Weight Slider Row ===== */
   .weight-row {
@@ -85,8 +88,28 @@
   }
   .weight-total__warning.visible { display: block; }
   .weight-chart-wrap {
-    display: flex; align-items: center; justify-content: center;
-    padding-top: 8px;
+    display: flex; flex-direction: column; gap: 6px;
+    padding-top: 12px;
+  }
+  .weight-bar {
+    display: flex; align-items: center; gap: 8px;
+  }
+  .weight-bar__label {
+    font: 400 12px var(--font-ui);
+    color: var(--text-muted);
+    min-width: 56px;
+    text-align: right;
+  }
+  .weight-bar__track {
+    flex: 1; height: 8px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .weight-bar__fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.3s ease;
   }
 
   /* ===== Filter Row ===== */
@@ -266,8 +289,23 @@
           权重合计必须为 100%，当前不等于 100%
         </div>
 
-        <div class="weight-chart-wrap">
-          <div id="weightChart" style="width:200px;height:200px;"></div>
+        <div class="weight-chart-wrap" id="weightBars">
+          <div class="weight-bar">
+            <span class="weight-bar__label">技术面</span>
+            <div class="weight-bar__track"><div class="weight-bar__fill" id="bar_technical" style="width:50%;background:#3B82F6;"></div></div>
+          </div>
+          <div class="weight-bar">
+            <span class="weight-bar__label">基本面</span>
+            <div class="weight-bar__track"><div class="weight-bar__fill" id="bar_fundamental" style="width:42%;background:#22C55E;"></div></div>
+          </div>
+          <div class="weight-bar">
+            <span class="weight-bar__label">资金面</span>
+            <div class="weight-bar__track"><div class="weight-bar__fill" id="bar_money_flow" style="width:42%;background:#F59E0B;"></div></div>
+          </div>
+          <div class="weight-bar">
+            <span class="weight-bar__label">情绪面</span>
+            <div class="weight-bar__track"><div class="weight-bar__fill" id="bar_sentiment" style="width:33%;background:#A855F7;"></div></div>
+          </div>
         </div>
       </div>
     </section>
@@ -283,7 +321,7 @@
             <div class="filter-row__label">排除 ST/*ST 股</div>
             <div class="filter-row__desc">自动过滤风险警示股票</div>
           </div>
-          <label class="switch">
+          <label class="switch" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;overflow:hidden;">
             <input type="checkbox" id="filter_exclude_st" {{ 'checked' if filters.exclude_st else '' }}>
             <span class="slider"></span>
           </label>
@@ -293,7 +331,7 @@
             <div class="filter-row__label">排除涨跌停</div>
             <div class="filter-row__desc">过滤当日涨停/跌停股票</div>
           </div>
-          <label class="switch">
+          <label class="switch" style="position:relative;display:inline-block;width:44px;height:24px;flex-shrink:0;overflow:hidden;">
             <input type="checkbox" id="filter_exclude_limit" {{ 'checked' if filters.exclude_limit else '' }}>
             <span class="slider"></span>
           </label>
@@ -441,11 +479,8 @@
 <script>
 document.addEventListener('DOMContentLoaded', function() {
 
-  // ===== Weight Chart (Donut) =====
-  var weightChart = echarts.init(document.getElementById('weightChart'));
+  // ===== Weight Bars =====
   var weightKeys = ['technical', 'fundamental', 'money_flow', 'sentiment'];
-  var weightLabels = ['技术面', '基本面', '资金面', '市场情绪'];
-  var weightColors = ['#3B82F6', '#22C55E', '#F59E0B', '#A855F7'];
 
   function getWeightValues() {
     return weightKeys.map(function(key) {
@@ -453,7 +488,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
   }
 
-  function updateWeightChart() {
+  function updateWeightBars() {
     var values = getWeightValues();
     var total = values.reduce(function(a, b) { return a + b; }, 0);
 
@@ -470,33 +505,12 @@ document.addEventListener('DOMContentLoaded', function() {
       warningEl.classList.add('visible');
     }
 
-    // Update chart
-    var chartData = weightLabels.map(function(label, idx) {
-      return { name: label, value: values[idx] };
-    });
-
-    weightChart.setOption({
-      tooltip: {
-        backgroundColor: '#1F2937',
-        borderColor: 'rgba(255,255,255,0.1)',
-        textStyle: { color: '#F1F5F9', fontFamily: "'Fira Code', monospace", fontSize: 13 },
-        formatter: function(p) {
-          return p.name + ': ' + p.value + '%';
-        }
-      },
-      series: [{
-        type: 'pie',
-        radius: ['55%', '80%'],
-        center: ['50%', '50%'],
-        avoidLabelOverlap: false,
-        itemStyle: {
-          borderColor: '#111827',
-          borderWidth: 2
-        },
-        label: { show: false },
-        data: chartData,
-        color: weightColors
-      }]
+    // Update bars (max width = 60% slider max mapped to 100% bar width)
+    weightKeys.forEach(function(key, idx) {
+      var bar = document.getElementById('bar_' + key);
+      if (bar) {
+        bar.style.width = (values[idx] / 60 * 100) + '%';
+      }
     });
   }
 
@@ -506,12 +520,12 @@ document.addEventListener('DOMContentLoaded', function() {
     var valDisplay = document.getElementById('val_' + key);
     slider.addEventListener('input', function() {
       valDisplay.textContent = slider.value + '%';
-      updateWeightChart();
+      updateWeightBars();
     });
   });
 
   // Initial render
-  updateWeightChart();
+  updateWeightBars();
 
   // ===== Helper: create feedback content =====
   function setFeedbackLoading(el, text) {
@@ -560,11 +574,6 @@ document.addEventListener('DOMContentLoaded', function() {
       btn.style.opacity = '1';
     }, 1500);
   };
-
-  // ===== Resize =====
-  window.addEventListener('resize', function() {
-    weightChart.resize();
-  });
 
   // Re-init Lucide icons
   lucide.createIcons();
