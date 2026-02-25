@@ -35,9 +35,16 @@ class SentimentCollector(BaseCollector):
             return pd.DataFrame()
 
     def collect(self) -> dict:
-        return {
-            "sector_flow": self.collect_sector_flow(),
-            "boards": self.collect_board_names(),
-            "zt_pool": self.collect_zt_pool(datetime.now().strftime("%Y%m%d")),
-            "north_flow": self.collect_north_flow(),
-        }
+        result = {}
+        for key, fn in [
+            ("sector_flow", self.collect_sector_flow),
+            ("boards", self.collect_board_names),
+            ("zt_pool", lambda: self.collect_zt_pool(datetime.now().strftime("%Y%m%d"))),
+            ("north_flow", self.collect_north_flow),
+        ]:
+            try:
+                result[key] = fn()
+            except Exception as e:
+                logger.warning(f"情绪数据[{key}]采集失败(降级为空): {e}")
+                result[key] = pd.DataFrame()
+        return result

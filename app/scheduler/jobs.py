@@ -101,19 +101,34 @@ def _run_pipeline_inner():
             logger.warning("过滤后股票池为空，跳过")
             return
 
-        # --- Phase 2: 数据采集 ---
+        # --- Phase 2: 数据采集（各采集器独立容错） ---
         _pipeline_status["phase"] = "collecting"
         logger.info("[2/4] 数据采集...")
-        mc.collect(stock_list, session)
+
+        try:
+            mc.collect(stock_list, session)
+        except Exception as e:
+            logger.error(f"K线采集异常(继续执行): {e}")
 
         fc = FundamentalCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
-        fc.collect(stock_list, session)
+        try:
+            fc.collect(stock_list, session)
+        except Exception as e:
+            logger.error(f"基本面采集异常(继续执行): {e}")
 
         mfc = MoneyFlowCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
-        mfc.collect(stock_list, session)
+        try:
+            mfc.collect(stock_list, session)
+        except Exception as e:
+            logger.error(f"资金流采集异常(继续执行): {e}")
 
         sc = SentimentCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
-        sentiment_data = sc.collect()
+        sentiment_data = {"sector_flow": pd.DataFrame(), "boards": pd.DataFrame(),
+                          "zt_pool": pd.DataFrame(), "north_flow": pd.DataFrame()}
+        try:
+            sentiment_data = sc.collect()
+        except Exception as e:
+            logger.error(f"情绪数据采集异常(使用空数据继续): {e}")
 
         # Enrich fundamentals with spot data
         if snapshot_df is not None and not snapshot_df.empty:

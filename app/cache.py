@@ -51,20 +51,40 @@ class TTLCache:
                 self._data.clear()
                 logger.debug("缓存已全部清除")
 
-    def get_or_set(self, key: str, fn, ttl: int = 300):
+    def get_stale(self, key: str):
+        """获取缓存值（忽略 TTL，用于降级）"""
+        with self._lock:
+            if key in self._data:
+                val, _ts = self._data[key]
+                return val
+            return None
+
+    def get_or_set(self, key: str, fn, ttl: int = 300, timeout: float = 8.0):
         """获取缓存，未命中则调用 fn 并缓存结果
 
         Args:
             key: 缓存键
             fn: 缓存未命中时的回调函数
             ttl: 缓存有效期（秒）
+            timeout: fn 调用超时时间（秒），超时返回旧缓存或 None
         """
         val = self.get(key, ttl)
         if val is not None:
             return val
-        val = fn()
-        self.set(key, val)
-        return val
+
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(fn)
+            try:
+                val = future.result(timeout=timeout)
+                self.set(key, val)
+                return val
+            except (concurrent.futures.TimeoutError, Exception) as e:
+                logger.warning(f"缓存刷新失败[{key}], 尝试返回旧数据: {e}")
+                stale = self.get_stale(key)
+                if stale is not None:
+                    return stale
+                return None
 
 
 # 全局缓存实例

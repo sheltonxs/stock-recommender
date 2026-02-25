@@ -51,6 +51,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"调度器启动失败 (可忽略): {e}")
 
+    # Preload cache in background so first homepage visit is fast
+    import threading
+    def _warm_cache():
+        try:
+            _build_market_indices()
+            _build_sectors()
+            logger.info("首页缓存预热完成")
+        except Exception as e:
+            logger.warning(f"缓存预热失败(可忽略): {e}")
+    threading.Thread(target=_warm_cache, daemon=True).start()
+
     yield
 
     # Shutdown
@@ -154,9 +165,17 @@ def _build_market_indices_uncached() -> list[dict]:
 
 
 def _build_market_indices() -> list[dict]:
-    """获取市场指数（带缓存）"""
+    """获取市场指数（带缓存 + 超时保护）"""
     ttl = get_cache_ttl(trading_ttl=300, non_trading_ttl=1800)
-    return cache.get_or_set("market_indices", _build_market_indices_uncached, ttl)
+    result = cache.get_or_set("market_indices", _build_market_indices_uncached, ttl, timeout=8.0)
+    if result is None:
+        return [
+            {"name": "上证指数", "code": "000001", "price": 0, "change": 0, "change_pct": 0, "volume": "—"},
+            {"name": "深证成指", "code": "399001", "price": 0, "change": 0, "change_pct": 0, "volume": "—"},
+            {"name": "创业板指", "code": "399006", "price": 0, "change": 0, "change_pct": 0, "volume": "—"},
+            {"name": "科创50", "code": "000688", "price": 0, "change": 0, "change_pct": 0, "volume": "—"},
+        ]
+    return result
 
 
 def _build_sectors_uncached() -> list[dict]:
@@ -184,9 +203,12 @@ def _build_sectors_uncached() -> list[dict]:
 
 
 def _build_sectors() -> list[dict]:
-    """获取板块数据（带缓存）"""
+    """获取板块数据（带缓存 + 超时保护）"""
     ttl = get_cache_ttl(trading_ttl=300, non_trading_ttl=1800)
-    return cache.get_or_set("sectors", _build_sectors_uncached, ttl)
+    result = cache.get_or_set("sectors", _build_sectors_uncached, ttl, timeout=8.0)
+    if result is None:
+        return [{"name": "暂无数据", "value": 0, "change_pct": 0, "amount": 0, "leader": ""}]
+    return result
 
 
 def _build_sankey(session: Session) -> dict:

@@ -36,7 +36,7 @@ class BaseCollector:
                 last_err = e
                 logger.warning(f"[{func_name}] 第{attempt}次失败: {e}")
                 if attempt < self.retry:
-                    time.sleep(1.0 * attempt)
+                    time.sleep(2.0 * attempt)  # exponential backoff
         raise last_err
 
     def collect(self):
