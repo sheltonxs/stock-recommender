@@ -90,16 +90,62 @@ class MarketCollector(BaseCollector):
         return count
 
     def collect_snapshot(self) -> pd.DataFrame:
-        """获取全A快照，成功后缓存到文件；失败时回退到缓存"""
+        """获取全A快照，三级降级: Tier1 push2实时 → Tier2 comment_em(24h) → Tier3 文件缓存"""
+        # Tier 1: push2 实时快照
         try:
             df = self._call_ak("stock_zh_a_spot_em")
             if df is not None and not df.empty:
                 self._save_snapshot_cache(df)
                 return df
         except Exception as e:
-            logger.warning(f"实时快照获取失败，尝试加载缓存: {e}")
+            logger.warning(f"Tier1 实时快照失败: {e}")
 
+        # Tier 2: stock_comment_em (datacenter-web, 24h可用)
+        try:
+            df = self._collect_snapshot_night()
+            if df is not None and not df.empty:
+                logger.info(f"Tier2 comment_em 快照获取成功: {len(df)} 条")
+                self._save_snapshot_cache(df)
+                return df
+        except Exception as e:
+            logger.warning(f"Tier2 comment_em 快照失败: {e}")
+
+        # Tier 3: 文件缓存
         return self._load_snapshot_cache()
+
+    def _collect_snapshot_night(self) -> pd.DataFrame:
+        """夜间快照源: stock_comment_em (datacenter-web, 24h可用)"""
+        df = self._call_ak("stock_comment_em")
+        if df is None or df.empty:
+            return pd.DataFrame()
+
+        col_map = {}
+        for col in df.columns:
+            if "代码" in col:
+                col_map[col] = "代码"
+            elif "名称" in col:
+                col_map[col] = "名称"
+            elif "最新价" in col or "收盘价" in col:
+                col_map[col] = "最新价"
+            elif "涨跌幅" in col:
+                col_map[col] = "涨跌幅"
+            elif "换手率" in col:
+                col_map[col] = "换手率"
+            elif "市盈率" in col:
+                col_map[col] = "市盈率-动态"
+
+        if col_map:
+            df = df.rename(columns=col_map)
+
+        # 过滤无效行
+        if "最新价" in df.columns:
+            df = df[pd.to_numeric(df["最新价"], errors="coerce") > 0]
+
+        if len(df) < 100:
+            logger.warning(f"comment_em 有效行不足: {len(df)}")
+            return pd.DataFrame()
+
+        return df
 
     def _save_snapshot_cache(self, df: pd.DataFrame):
         try:

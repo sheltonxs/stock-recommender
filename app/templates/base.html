@@ -123,6 +123,21 @@
       50% { opacity: 0.4; }
     }
 
+    /* ===== Refresh Button ===== */
+    .navbar__refresh-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 14px; border-radius: 20px;
+      background: rgba(59,130,246,0.12); border: 1px solid rgba(59,130,246,0.25);
+      color: var(--color-primary-light); font: 500 13px var(--font-ui);
+      cursor: pointer; transition: all var(--transition-fast);
+      white-space: nowrap;
+    }
+    .navbar__refresh-btn:hover { background: rgba(59,130,246,0.2); border-color: rgba(59,130,246,0.4); }
+    .navbar__refresh-btn:disabled { opacity: 0.7; cursor: not-allowed; }
+    .navbar__refresh-icon { width: 14px; height: 14px; }
+    .navbar__refresh-btn.loading .navbar__refresh-icon { animation: spin-icon 1s linear infinite; }
+    @keyframes spin-icon { to { transform: rotate(360deg); } }
+
     /* ===== Layout ===== */
     .main { padding: 72px 24px 60px; max-width: 1440px; margin: 0 auto; }
 
@@ -368,9 +383,13 @@
                 box-shadow:var(--shadow-lg);max-height:320px;overflow-y:auto;z-index:100;"></div>
     </div>
     <div class="navbar__right" style="margin-left:16px;">
-      <span class="navbar__status">
-        <span class="navbar__status-dot"></span>
-        数据已更新
+      <button class="navbar__refresh-btn" id="navRefreshBtn" onclick="triggerPipelineRefresh()">
+        <i data-lucide="refresh-cw" class="navbar__refresh-icon"></i>
+        <span id="navRefreshText">刷新数据</span>
+      </button>
+      <span class="navbar__status" id="navStatus">
+        <span class="navbar__status-dot" id="navStatusDot"></span>
+        <span id="navStatusText">数据已更新</span>
       </span>
       <span class="navbar__date">{{ today }}</span>
     </div>
@@ -388,6 +407,108 @@
 
   <script>
     lucide.createIcons();
+
+    /* ===== Pipeline Refresh ===== */
+    (function(){
+      var PHASE_TEXT = {
+        'starting': '启动中...',
+        'snapshot': '获取股票池...',
+        'collecting': '采集数据...',
+        'scoring': '评分计算...',
+        'writing': '写入结果...',
+        'backfill': '回测回填...',
+        'completed': '更新完成',
+        'failed': '更新失败'
+      };
+      var pollTimer = null;
+
+      function setRefreshState(loading, text) {
+        var btn = document.getElementById('navRefreshBtn');
+        var textEl = document.getElementById('navRefreshText');
+        var dot = document.getElementById('navStatusDot');
+        var statusText = document.getElementById('navStatusText');
+        if (loading) {
+          btn.classList.add('loading');
+          btn.disabled = true;
+          textEl.textContent = text || '运行中...';
+          dot.style.background = 'var(--color-warning)';
+          statusText.textContent = '流水线运行中';
+        } else {
+          btn.classList.remove('loading');
+          btn.disabled = false;
+          textEl.textContent = '刷新数据';
+        }
+      }
+
+      function setCompleted(success) {
+        var dot = document.getElementById('navStatusDot');
+        var statusText = document.getElementById('navStatusText');
+        if (success) {
+          dot.style.background = 'var(--color-down)';
+          statusText.textContent = '数据已更新';
+        } else {
+          dot.style.background = 'var(--color-up)';
+          statusText.textContent = '更新失败';
+        }
+      }
+
+      function pollStatus() {
+        fetch('/api/task/status')
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            var s = data.data || data;
+            if (s.running) {
+              var phaseText = PHASE_TEXT[s.phase] || s.phase || '运行中...';
+              if (s.progress) phaseText += ' ' + s.progress;
+              setRefreshState(true, phaseText);
+              pollTimer = setTimeout(pollStatus, 2000);
+            } else {
+              setRefreshState(false);
+              if (s.phase === 'completed') {
+                setCompleted(true);
+                setTimeout(function(){ location.reload(); }, 800);
+              } else if (s.phase === 'failed') {
+                setCompleted(false);
+              }
+            }
+          })
+          .catch(function(){
+            setRefreshState(false);
+            setCompleted(false);
+          });
+      }
+
+      window.triggerPipelineRefresh = function() {
+        setRefreshState(true, '提交任务...');
+        fetch('/api/task/run', { method: 'POST' })
+          .then(function(r){ return r.json(); })
+          .then(function(data){
+            if (data.code !== 0) {
+              // 任务已在运行中，直接进入轮询
+              pollTimer = setTimeout(pollStatus, 1000);
+              return;
+            }
+            pollTimer = setTimeout(pollStatus, 1500);
+          })
+          .catch(function(){
+            setRefreshState(false);
+            setCompleted(false);
+          });
+      };
+
+      // 页面加载时检测是否有正在运行的任务
+      fetch('/api/task/status')
+        .then(function(r){ return r.json(); })
+        .then(function(data){
+          var s = data.data || data;
+          if (s.running) {
+            setRefreshState(true, PHASE_TEXT[s.phase] || '运行中...');
+            pollTimer = setTimeout(pollStatus, 2000);
+          }
+        })
+        .catch(function(){});
+    })();
+
     /* ===== Global Search ===== */
     (function(){
       var input = document.getElementById('navSearch');

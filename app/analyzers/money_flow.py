@@ -7,7 +7,7 @@
 class MoneyFlowAnalyzer:
     """资金面评分引擎"""
 
-    def score(self, rows: list[dict]) -> dict:
+    def score(self, rows: list[dict], market_cap: float = 0) -> dict:
         """
         对最近几日的资金流向数据评分。
 
@@ -15,6 +15,7 @@ class MoneyFlowAnalyzer:
             rows: 按时间升序排列的资金流向记录列表，每条包含
                   main_net_inflow (万元), main_net_ratio (%),
                   super_large_net (万元)。
+            market_cap: 总市值（元），用于归一化资金流入。0 表示无市值数据。
 
         Returns:
             {"total", "signals"}
@@ -30,15 +31,30 @@ class MoneyFlowAnalyzer:
 
         # ---------- 近 3 日主力净流入总额 ----------
         inflow_sum = sum(r.get("main_net_inflow", 0) or 0 for r in recent)
-        if inflow_sum > 50000:
-            total_score += 25
-            signals.append(f"近3日主力净流入{inflow_sum:.0f}万(大幅) \u2705")
-        elif inflow_sum > 10000:
-            total_score += 15
-            signals.append(f"近3日主力净流入{inflow_sum:.0f}万 \u2705")
-        elif inflow_sum > 0:
-            total_score += 8
-            signals.append(f"近3日主力小幅净流入 \u2705")
+
+        if market_cap > 0:
+            # 市值归一化: inflow_sum 是万元，market_cap 是元
+            inflow_ratio = inflow_sum / (market_cap / 10000) * 100  # 百分比
+            if inflow_ratio > 2.0:
+                total_score += 25
+                signals.append(f"近3日主力净流入占比{inflow_ratio:.2f}%(极强) \u2705")
+            elif inflow_ratio > 0.5:
+                total_score += 15
+                signals.append(f"近3日主力净流入占比{inflow_ratio:.2f}%(较强) \u2705")
+            elif inflow_ratio > 0:
+                total_score += 8
+                signals.append(f"近3日主力小幅净流入 \u2705")
+        else:
+            # 无市值数据时回退到绝对值
+            if inflow_sum > 50000:
+                total_score += 25
+                signals.append(f"近3日主力净流入{inflow_sum:.0f}万(大幅) \u2705")
+            elif inflow_sum > 10000:
+                total_score += 15
+                signals.append(f"近3日主力净流入{inflow_sum:.0f}万 \u2705")
+            elif inflow_sum > 0:
+                total_score += 8
+                signals.append(f"近3日主力小幅净流入 \u2705")
 
         # ---------- 连续 3 日主力净流入为正 ----------
         if len(recent) >= 3:

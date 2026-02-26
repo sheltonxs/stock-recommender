@@ -2,12 +2,14 @@
 
 import logging
 import threading
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 import pandas as pd
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.cache import is_trading_time
 from app.db import get_session
 from app.collectors.market import MarketCollector
 from app.collectors.fundamental import FundamentalCollector
@@ -37,6 +39,7 @@ _pipeline_status = {
     "last_error": None,
     "phase": None,
     "progress": "",
+    "data_source": None,
 }
 
 
@@ -80,6 +83,11 @@ def _run_pipeline_inner():
     logger.info("===== 每日流水线启动 =====")
     session = get_session()
 
+    # A1: 夜间模式检测
+    nighttime = not is_trading_time()
+    if nighttime:
+        logger.info("夜间模式: 跳过实时快照，优先使用缓存/备用数据源")
+
     try:
         # --- Phase 1: 快照 + 过滤 ---
         _pipeline_status["phase"] = "snapshot"
@@ -87,7 +95,16 @@ def _run_pipeline_inner():
         mc = MarketCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
 
         try:
-            snapshot_df = mc.collect_snapshot()
+            if nighttime:
+                # 夜间模式: 跳过 push2，直接走 Tier2/Tier3
+                snapshot_df = mc._collect_snapshot_night()
+                if snapshot_df is None or snapshot_df.empty:
+                    snapshot_df = mc._load_snapshot_cache()
+                    logger.info("夜间模式: 使用文件缓存快照")
+                else:
+                    logger.info(f"夜间模式: comment_em 快照 {len(snapshot_df)} 条")
+            else:
+                snapshot_df = mc.collect_snapshot()
         except Exception as e:
             logger.error(f"快照获取失败: {e}")
             snapshot_df = pd.DataFrame()
@@ -97,9 +114,19 @@ def _run_pipeline_inner():
         logger.info(f"过滤后股票池: {len(stock_list)} 只")
         _pipeline_status["progress"] = f"股票池 {len(stock_list)} 只"
 
+        # Tier 4 降级: 快照为空时从数据库历史数据构建股票池
         if not stock_list:
-            logger.warning("过滤后股票池为空，跳过")
-            return
+            logger.warning("快照股票池为空，尝试从数据库构建...")
+            stock_list = _build_pool_from_db(session)
+            if stock_list:
+                _pipeline_status["data_source"] = "database"
+                _pipeline_status["progress"] = f"股票池 {len(stock_list)} 只 (数据库降级)"
+                logger.info(f"数据库降级: 获得 {len(stock_list)} 只股票")
+            else:
+                logger.warning("数据库也无可用数据，跳过")
+                return
+        else:
+            _pipeline_status["data_source"] = "night_snapshot" if nighttime else "snapshot"
 
         # --- Phase 2: 数据采集（各采集器独立容错） ---
         _pipeline_status["phase"] = "collecting"
@@ -157,14 +184,68 @@ def _run_pipeline_inner():
         scorer = CompositeScorer()
 
         trade_date = datetime.now().date()
+
+        # --- B5: 批量预加载数据 ---
+        all_codes = [code for code, _ in stock_list]
+
+        # 批量加载 K 线
+        kline_all = session.query(StockDaily).filter(
+            StockDaily.stock_code.in_(all_codes)
+        ).order_by(StockDaily.stock_code, StockDaily.trade_date).all()
+        kline_map = defaultdict(list)
+        for r in kline_all:
+            kline_map[r.stock_code].append(r)
+
+        # 批量加载最新基本面 (每只股票取最新一条)
+        fund_all = session.query(StockFundamental).filter(
+            StockFundamental.stock_code.in_(all_codes)
+        ).order_by(StockFundamental.report_date.desc()).all()
+        fund_map = {}
+        for r in fund_all:
+            if r.stock_code not in fund_map:
+                fund_map[r.stock_code] = r
+
+        # 批量加载资金流（最近 10 天）
+        from sqlalchemy import func
+        ten_days_ago = trade_date - timedelta(days=15)
+        mf_all = session.query(StockMoneyFlow).filter(
+            StockMoneyFlow.stock_code.in_(all_codes),
+            StockMoneyFlow.trade_date >= ten_days_ago,
+        ).order_by(StockMoneyFlow.stock_code, StockMoneyFlow.trade_date).all()
+        mf_map = defaultdict(list)
+        for r in mf_all:
+            mf_map[r.stock_code].append(r)
+
+        logger.info(f"批量加载完成: K线{len(kline_all)}条, 基本面{len(fund_map)}只, 资金流{len(mf_all)}条")
+
+        # --- B1: 构建行业平均 PE 映射 ---
+        industry_pe_sums = defaultdict(lambda: [0.0, 0])  # {industry: [sum_pe, count]}
+        for code in all_codes:
+            ind = industry_map.get(code, "")
+            if not ind:
+                continue
+            fund_row = fund_map.get(code)
+            if fund_row and fund_row.pe_ttm and 0 < fund_row.pe_ttm < 300:
+                industry_pe_sums[ind][0] += fund_row.pe_ttm
+                industry_pe_sums[ind][1] += 1
+        industry_pe_map = {k: v[0] / v[1] for k, v in industry_pe_sums.items() if v[1] >= 3}
+
+        # 硬编码行业 PE 基准回退表
+        _FALLBACK_PE = {
+            "银行": 6, "保险": 10, "证券": 20, "房地产": 8,
+            "白酒": 35, "医药": 30, "半导体": 50, "软件": 45,
+            "光伏": 25, "新能源": 35, "汽车": 20, "钢铁": 10,
+            "煤炭": 8, "电力": 15, "化工": 15, "家电": 15,
+        }
+        logger.info(f"行业PE映射: {len(industry_pe_map)} 个行业有动态PE")
+
         results = []
         scored_count = 0
 
         for code, name in stock_list:
             try:
-                kline_rows = session.query(StockDaily).filter_by(
-                    stock_code=code
-                ).order_by(StockDaily.trade_date).all()
+                # B5: 从预加载 dict 获取数据
+                kline_rows = kline_map.get(code, [])
 
                 if len(kline_rows) < 60:
                     continue
@@ -182,12 +263,11 @@ def _run_pipeline_inner():
                 # 写入 StockTechnical 表（持久化指标）
                 _save_technical_indicators(tech_analyzer, kline_df, code, trade_date, session)
 
-                # Fundamentals
-                fund_row = session.query(StockFundamental).filter_by(
-                    stock_code=code
-                ).order_by(StockFundamental.report_date.desc()).first()
+                # B5: Fundamentals from pre-loaded map
+                fund_row = fund_map.get(code)
 
                 fund_data = {}
+                report_date = None
                 if fund_row:
                     fund_data = {
                         "pe_ttm": fund_row.pe_ttm, "pb": fund_row.pb,
@@ -199,21 +279,38 @@ def _run_pipeline_inner():
                         "current_ratio": fund_row.current_ratio,
                         "operating_cashflow": fund_row.operating_cashflow,
                     }
-                fund_result = fund_analyzer.score(fund_data)
+                    report_date = fund_row.report_date
 
-                # Money flow
-                mf_rows = session.query(StockMoneyFlow).filter_by(
-                    stock_code=code
-                ).order_by(StockMoneyFlow.trade_date.desc()).limit(10).all()
+                # B1: 动态行业 PE
+                industry = industry_map.get(code, _get_industry(code, snapshot_df))
+                avg_pe = industry_pe_map.get(industry)
+                if avg_pe is None:
+                    # 尝试模糊匹配回退表
+                    avg_pe = next(
+                        (v for k, v in _FALLBACK_PE.items() if k in industry),
+                        30.0
+                    ) if industry else 30.0
+
+                # B8: 传入 report_date 用于新鲜度惩罚
+                fund_result = fund_analyzer.score(fund_data,
+                                                  industry_avg_pe=avg_pe,
+                                                  report_date=report_date)
+
+                # B5: Money flow from pre-loaded map
+                mf_rows = mf_map.get(code, [])
+                # 取最近 10 条
+                mf_recent = mf_rows[-10:] if len(mf_rows) > 10 else mf_rows
                 mf_dicts = [{
                     "main_net_inflow": r.main_net_inflow,
                     "main_net_ratio": r.main_net_ratio,
                     "super_large_net": r.super_large_net,
-                } for r in reversed(mf_rows)]
-                money_result = money_analyzer.score(mf_dicts)
+                } for r in mf_recent]
+
+                # B2: 传入市值用于资金面归一化
+                market_cap = fund_row.market_cap if fund_row and fund_row.market_cap else 0
+                money_result = money_analyzer.score(mf_dicts, market_cap=market_cap)
 
                 # Sentiment
-                industry = industry_map.get(code, _get_industry(code, snapshot_df))
                 sent_result = sent_analyzer.score(
                     code, industry,
                     sentiment_data.get("sector_flow", pd.DataFrame()),
@@ -417,16 +514,48 @@ def backfill_results(session: Session):
 # 辅助函数
 # ---------------------------------------------------------------------------
 
+def _build_pool_from_db(session: Session) -> list[tuple]:
+    """从数据库历史数据构建股票池 (Tier 3 降级)"""
+    from sqlalchemy import func
+
+    latest_date = session.query(func.max(StockDaily.trade_date)).scalar()
+    if not latest_date:
+        return []
+
+    rows = session.query(StockDaily).filter_by(trade_date=latest_date).all()
+
+    result = []
+    for r in rows:
+        if r.close and r.close > 0 and "ST" not in (r.stock_name or ""):
+            result.append((r.stock_code, r.stock_name or ""))
+
+    max_size = settings.stock_pool_size * 5
+    logger.info(f"数据库降级: 最近交易日 {latest_date}, 共 {len(rows)} 条, 过滤后 {len(result[:max_size])} 只")
+    return result[:max_size]
+
+
 def _filter_stock_pool(df) -> list[dict]:
-    """过滤股票池 (PRD 4.6)"""
+    """过滤股票池 (PRD 4.6)，使用配置值，适配缺少列的情况"""
     if df is None or df.empty:
         return []
     filtered = df.copy()
-    filtered = filtered[~filtered["名称"].str.contains("ST", na=False)]
-    filtered = filtered[filtered["最新价"] > 0]
-    filtered = filtered[filtered["总市值"] > 20e8]
-    filtered = filtered[filtered["换手率"] < 20]
-    filtered = filtered[filtered["涨跌幅"].abs() < 9.5]
+
+    if "名称" in filtered.columns:
+        filtered = filtered[~filtered["名称"].str.contains("ST", na=False)]
+    if "最新价" in filtered.columns:
+        filtered = filtered[pd.to_numeric(filtered["最新价"], errors="coerce") > 0]
+    if "总市值" in filtered.columns:
+        filtered = filtered[
+            pd.to_numeric(filtered["总市值"], errors="coerce") > settings.filter_min_market_cap * 1e8
+        ]
+    if "换手率" in filtered.columns:
+        filtered = filtered[
+            pd.to_numeric(filtered["换手率"], errors="coerce") < settings.filter_max_turnover
+        ]
+    if "涨跌幅" in filtered.columns:
+        filtered = filtered[
+            pd.to_numeric(filtered["涨跌幅"], errors="coerce").abs() < settings.filter_max_change_pct
+        ]
 
     return [{"code": str(r["代码"]), "name": str(r["名称"])}
             for _, r in filtered.iterrows()]

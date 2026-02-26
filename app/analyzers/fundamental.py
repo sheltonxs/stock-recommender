@@ -3,11 +3,14 @@
 评分体系 100 分 = 估值(30) + 盈利能力(30) + 成长性(20) + 财务健康(20)
 """
 
+from datetime import date
+
 
 class FundamentalAnalyzer:
     """基本面评分引擎"""
 
-    def score(self, data: dict, industry_avg_pe: float = 30.0) -> dict:
+    def score(self, data: dict, industry_avg_pe: float = 30.0,
+              report_date: date | None = None) -> dict:
         """
         对基本面数据进行评分。
 
@@ -162,6 +165,19 @@ class FundamentalAnalyzer:
         health_score = min(health_score, 20)
 
         total = val_score + profit_score + growth_score + health_score
+
+        # ---------- 财报新鲜度惩罚 ----------
+        freshness_factor = 1.0
+        if report_date is not None:
+            months_old = (date.today() - report_date).days / 30.0
+            if months_old > 12:
+                freshness_factor = 0.5
+                signals.append(f"\u26a0\ufe0f 财报已过期{months_old:.0f}个月(5折)")
+            elif months_old > 6:
+                freshness_factor = 1.0 - (months_old - 6) / 12.0  # 6个月=1.0, 12个月=0.5
+                signals.append(f"\u26a0\ufe0f 财报{months_old:.0f}个月前({freshness_factor:.0%})")
+            total = round(total * freshness_factor)
+
         return {
             "total": min(total, 100),
             "valuation": val_score,

@@ -38,6 +38,26 @@ class CompositeScorer:
             1,
         )
 
+        # --- 信号冲突检测 ---
+        conflict_signals = []
+        dim_pairs = [
+            ("技术面", tech_s, "资金面", money_s),
+            ("技术面", tech_s, "基本面", fund_s),
+            ("基本面", fund_s, "资金面", money_s),
+        ]
+        conflict_count = 0
+        for name_a, score_a, name_b, score_b in dim_pairs:
+            if abs(score_a - score_b) >= 40:
+                conflict_count += 1
+                conflict_signals.append(
+                    f"\u26a0\ufe0f {name_a}({score_a:.0f})与{name_b}({score_b:.0f})信号冲突"
+                )
+
+        if conflict_count >= 2:
+            total = round(total * 0.85, 1)
+        elif conflict_count == 1:
+            total = round(total * 0.93, 1)
+
         if total >= 80:
             risk, advice = "低", "强烈看多"
         elif total >= 70:
@@ -54,6 +74,7 @@ class CompositeScorer:
             + fundamental.get("signals", [])
             + money_flow.get("signals", [])
             + sentiment.get("signals", [])
+            + conflict_signals
         )
         bullish = [s for s in all_signals if "\u2705" in s]
         bearish = [s for s in all_signals if "\u26a0\ufe0f" in s]

@@ -545,18 +545,74 @@ document.addEventListener('DOMContentLoaded', function() {
   }
 
   // ===== Trigger Analysis =====
+  var PHASE_TEXT_SETTINGS = {
+    'starting': '启动中...',
+    'snapshot': '获取股票池...',
+    'collecting': '采集数据...',
+    'scoring': '评分计算...',
+    'writing': '写入结果...',
+    'backfill': '回测回填...',
+    'completed': '分析完成',
+    'failed': '分析失败'
+  };
+
+  function pollAnalysisStatus(btn, feedback) {
+    fetch('/api/task/status')
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        var s = data.data || data;
+        if (s.running) {
+          var text = PHASE_TEXT_SETTINGS[s.phase] || s.phase || '运行中...';
+          if (s.progress) text += ' ' + s.progress;
+          setFeedbackLoading(feedback, text);
+          setTimeout(function(){ pollAnalysisStatus(btn, feedback); }, 2000);
+        } else {
+          btn.disabled = false;
+          btn.style.opacity = '1';
+          if (s.phase === 'completed') {
+            setFeedbackDone(feedback, '分析完成');
+            setTimeout(function(){ location.reload(); }, 1000);
+          } else if (s.phase === 'failed') {
+            feedback.textContent = '分析失败: ' + (s.last_error || '未知错误');
+            feedback.style.color = 'var(--color-up)';
+            feedback.classList.add('show');
+          }
+        }
+      })
+      .catch(function(){
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        feedback.textContent = '请求失败';
+        feedback.style.color = 'var(--color-up)';
+        feedback.classList.add('show');
+      });
+  }
+
   window.triggerAnalysis = function() {
     var btn = document.getElementById('btnTriggerAnalysis');
     var feedback = document.getElementById('analysisFeedback');
     btn.disabled = true;
     btn.style.opacity = '0.6';
-    setFeedbackLoading(feedback, '分析任务已提交...');
+    setFeedbackLoading(feedback, '提交任务...');
 
-    setTimeout(function() {
-      setFeedbackDone(feedback, '分析完成');
-      btn.disabled = false;
-      btn.style.opacity = '1';
-    }, 2000);
+    fetch('/api/task/run', { method: 'POST' })
+      .then(function(r){ return r.json(); })
+      .then(function(data){
+        if (data.code !== 0) {
+          setFeedbackLoading(feedback, '任务运行中，跟踪进度...');
+          setTimeout(function(){ pollAnalysisStatus(btn, feedback); }, 1000);
+          return;
+        }
+        setFeedbackLoading(feedback, '分析任务已提交...');
+        setTimeout(function(){ pollAnalysisStatus(btn, feedback); }, 1500);
+      })
+      .catch(function(){
+        feedback.textContent = '请求失败';
+        feedback.style.color = 'var(--color-up)';
+        feedback.classList.add('show');
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      });
   };
 
   // ===== Cleanup Data =====

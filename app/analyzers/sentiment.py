@@ -44,13 +44,13 @@ class SentimentAnalyzer:
                 if not match.empty:
                     lianban = int(match.iloc[0][lianban_col])
                     if lianban == 1:
-                        total_score += 15
+                        total_score += 20
                         signals.append("首板涨停")
                     elif lianban == 2:
-                        total_score += 20
-                        signals.append("2连板")
+                        total_score += 12
+                        signals.append("2连板(追高递减)")
                     elif lianban >= 3:
-                        total_score += 10
+                        total_score += 5
                         signals.append(f"{lianban}连板(追高风险)")
 
         # ---------- 板块资金流排名 (20 分) ----------

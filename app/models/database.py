@@ -17,6 +17,7 @@ class StockDaily(Base):
     __table_args__ = (
         UniqueConstraint("stock_code", "trade_date", name="uq_daily_code_date"),
         Index("ix_daily_date", "trade_date"),
+        Index("ix_daily_stock_code", "stock_code"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -39,6 +40,7 @@ class StockTechnical(Base):
     __tablename__ = "stock_technical"
     __table_args__ = (
         UniqueConstraint("stock_code", "trade_date", name="uq_tech_code_date"),
+        Index("ix_tech_stock_code", "stock_code"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -74,6 +76,7 @@ class StockFundamental(Base):
     __tablename__ = "stock_fundamental"
     __table_args__ = (
         UniqueConstraint("stock_code", "report_date", name="uq_fund_code_date"),
+        Index("ix_fund_stock_code", "stock_code"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -100,6 +103,7 @@ class StockMoneyFlow(Base):
     __tablename__ = "stock_money_flow"
     __table_args__ = (
         UniqueConstraint("stock_code", "trade_date", name="uq_mf_code_date"),
+        Index("ix_mf_stock_code", "stock_code"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -146,6 +150,7 @@ class RecommendationResult(Base):
     __table_args__ = (
         UniqueConstraint("trade_date", "stock_code", name="uq_result_date_code"),
         Index("ix_result_date", "trade_date"),
+        Index("ix_result_stock_code", "stock_code"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
