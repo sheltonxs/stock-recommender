@@ -1,7 +1,9 @@
 """行情数据采集: K线 + 实时快照 + 涨停池"""
 
+import json
 import logging
 from datetime import date, datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -10,6 +12,8 @@ from app.collectors.base import BaseCollector, stock_market
 from app.models.database import StockDaily
 
 logger = logging.getLogger(__name__)
+
+SNAPSHOT_CACHE = Path(__file__).resolve().parent.parent.parent / "data" / "snapshot_cache.json"
 
 _KLINE_COL_MAP = {
     "日期": "trade_date",
@@ -86,8 +90,42 @@ class MarketCollector(BaseCollector):
         return count
 
     def collect_snapshot(self) -> pd.DataFrame:
-        df = self._call_ak("stock_zh_a_spot_em")
-        return df
+        """获取全A快照，成功后缓存到文件；失败时回退到缓存"""
+        try:
+            df = self._call_ak("stock_zh_a_spot_em")
+            if df is not None and not df.empty:
+                self._save_snapshot_cache(df)
+                return df
+        except Exception as e:
+            logger.warning(f"实时快照获取失败，尝试加载缓存: {e}")
+
+        return self._load_snapshot_cache()
+
+    def _save_snapshot_cache(self, df: pd.DataFrame):
+        try:
+            SNAPSHOT_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            cache = {
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "data": df.to_dict(orient="records"),
+            }
+            SNAPSHOT_CACHE.write_text(json.dumps(cache, ensure_ascii=False, default=str))
+            logger.info(f"快照已缓存: {len(df)} 条")
+        except Exception as e:
+            logger.warning(f"快照缓存写入失败: {e}")
+
+    def _load_snapshot_cache(self) -> pd.DataFrame:
+        if not SNAPSHOT_CACHE.exists():
+            logger.warning("无快照缓存文件")
+            return pd.DataFrame()
+        try:
+            cache = json.loads(SNAPSHOT_CACHE.read_text())
+            cached_date = cache.get("date", "unknown")
+            df = pd.DataFrame(cache["data"])
+            logger.info(f"已加载缓存快照 ({cached_date}), {len(df)} 条")
+            return df
+        except Exception as e:
+            logger.error(f"缓存快照加载失败: {e}")
+            return pd.DataFrame()
 
     def collect_zt_pool(self, trade_date: str) -> pd.DataFrame:
         df = self._call_ak("stock_zt_pool_em", date=trade_date)

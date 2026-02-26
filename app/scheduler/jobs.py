@@ -90,7 +90,7 @@ def _run_pipeline_inner():
             snapshot_df = mc.collect_snapshot()
         except Exception as e:
             logger.error(f"快照获取失败: {e}")
-            return
+            snapshot_df = pd.DataFrame()
 
         pool = _filter_stock_pool(snapshot_df)
         stock_list = [(r["code"], r["name"]) for r in pool]
