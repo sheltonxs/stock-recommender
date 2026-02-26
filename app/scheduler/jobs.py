@@ -111,6 +111,13 @@ def _run_pipeline_inner():
 
         pool = _filter_stock_pool(snapshot_df)
         stock_list = [(r["code"], r["name"]) for r in pool]
+
+        # 夜间模式: comment_em 缺少总市值列，池子过大时截断
+        if nighttime and len(stock_list) > settings.stock_pool_size * 5:
+            max_pool = settings.stock_pool_size * 5  # 500
+            logger.info(f"夜间模式: 股票池 {len(stock_list)} 只，截断至 {max_pool}")
+            stock_list = stock_list[:max_pool]
+
         logger.info(f"过滤后股票池: {len(stock_list)} 只")
         _pipeline_status["progress"] = f"股票池 {len(stock_list)} 只"
 
@@ -132,22 +139,25 @@ def _run_pipeline_inner():
         _pipeline_status["phase"] = "collecting"
         logger.info("[2/4] 数据采集...")
 
-        try:
-            mc.collect(stock_list, session)
-        except Exception as e:
-            logger.error(f"K线采集异常(继续执行): {e}")
+        if nighttime:
+            logger.info("夜间模式: 跳过所有数据采集(push2/push2his夜间不可用)，使用历史数据评分")
+        else:
+            try:
+                mc.collect(stock_list, session)
+            except Exception as e:
+                logger.error(f"K线采集异常(继续执行): {e}")
 
-        fc = FundamentalCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
-        try:
-            fc.collect(stock_list, session)
-        except Exception as e:
-            logger.error(f"基本面采集异常(继续执行): {e}")
+            fc = FundamentalCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
+            try:
+                fc.collect(stock_list, session)
+            except Exception as e:
+                logger.error(f"基本面采集异常(继续执行): {e}")
 
-        mfc = MoneyFlowCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
-        try:
-            mfc.collect(stock_list, session)
-        except Exception as e:
-            logger.error(f"资金流采集异常(继续执行): {e}")
+            mfc = MoneyFlowCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
+            try:
+                mfc.collect(stock_list, session)
+            except Exception as e:
+                logger.error(f"资金流采集异常(继续执行): {e}")
 
         sc = SentimentCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
         sentiment_data = {"sector_flow": pd.DataFrame(), "boards": pd.DataFrame(),
