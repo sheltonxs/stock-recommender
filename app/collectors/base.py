@@ -1,7 +1,9 @@
 """采集基类 - 限速、重试、日志"""
 
+import random
 import time
 import logging
+
 import akshare as ak
 
 logger = logging.getLogger(__name__)
@@ -13,11 +15,17 @@ class BaseCollector:
         self.delay = delay
         self.retry = retry
         self._last_call = 0.0
+        self._consecutive_failures = 0
 
     def _rate_limit(self):
         elapsed = time.time() - self._last_call
-        if elapsed < self.delay:
-            time.sleep(self.delay - elapsed)
+        # 连续失败时自动加大延迟
+        adaptive_delay = self.delay + (self._consecutive_failures * 0.5)
+        # 添加随机抖动避免被检测
+        jitter = random.uniform(0.1, 0.5)
+        wait = adaptive_delay + jitter - elapsed
+        if wait > 0:
+            time.sleep(wait)
         self._last_call = time.time()
 
     def _call_ak_raw(self, func_name: str, **kwargs):
@@ -31,12 +39,15 @@ class BaseCollector:
                 self._rate_limit()
                 result = self._call_ak_raw(func_name, **kwargs)
                 logger.debug(f"[{func_name}] 成功 (第{attempt}次)")
+                self._consecutive_failures = max(0, self._consecutive_failures - 1)
                 return result
             except Exception as e:
                 last_err = e
+                self._consecutive_failures += 1
                 logger.warning(f"[{func_name}] 第{attempt}次失败: {e}")
                 if attempt < self.retry:
-                    time.sleep(2.0 * attempt)  # exponential backoff
+                    backoff = 3.0 * (2 ** (attempt - 1)) + random.uniform(0, 2)
+                    time.sleep(backoff)
         raise last_err
 
     def collect(self):

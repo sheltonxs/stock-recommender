@@ -26,8 +26,8 @@ class Settings:
         self.weight_money_flow = float(os.getenv("WEIGHT_MONEY", "0.25"))
         self.weight_sentiment = float(os.getenv("WEIGHT_SENT", "0.20"))
 
-        self.akshare_delay = 0.8
-        self.akshare_retry = 3
+        self.akshare_delay = 1.5
+        self.akshare_retry = 4
         self.kline_days = 250
 
         self.filter_st = True

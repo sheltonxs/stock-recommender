@@ -144,7 +144,11 @@ def _run_pipeline_inner():
         _pipeline_status["phase"] = "scoring"
         logger.info("[3/4] 评分计算...")
         from app.collectors.industry import get_industry_map
-        industry_map = get_industry_map()
+        try:
+            industry_map = get_industry_map()
+        except Exception as e:
+            logger.warning(f"行业映射加载失败(使用空映射继续): {e}")
+            industry_map = {}
         logger.info(f"行业映射: {len(industry_map)} 只")
         tech_analyzer = TechnicalAnalyzer()
         fund_analyzer = FundamentalAnalyzer()
