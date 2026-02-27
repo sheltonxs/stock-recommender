@@ -49,7 +49,7 @@ def get_pipeline_status() -> dict:
 
 
 def run_daily_pipeline():
-    """每日盘后完整流水线（带并发锁）"""
+    """每日盘后完整流水线（带并发锁 + 自动重试）"""
     if not _pipeline_lock.acquire(blocking=False):
         logger.warning("Pipeline 已在运行中，跳过本次触发")
         return
@@ -64,14 +64,37 @@ def run_daily_pipeline():
 
         _pipeline_status["last_error"] = None
         _pipeline_status["phase"] = "completed"
+        _pipeline_status["retry_count"] = 0
     except Exception as e:
         _pipeline_status["last_error"] = str(e)
         _pipeline_status["phase"] = "failed"
         logger.error(f"流水线异常: {e}")
+
+        # 自动重试
+        retry_count = _pipeline_status.get("retry_count", 0)
+        if retry_count < settings.pipeline_max_retries:
+            _pipeline_status["retry_count"] = retry_count + 1
+            delay_min = settings.pipeline_retry_delay_minutes
+            retry_time = datetime.now() + timedelta(minutes=delay_min)
+            logger.info(f"流水线失败，{delay_min}分钟后第{retry_count + 1}次重试 ({retry_time:%H:%M})")
+            _schedule_retry(retry_time)
+        else:
+            logger.error(f"流水线已重试{retry_count}次仍失败，放弃")
     finally:
         _pipeline_status["running"] = False
         _pipeline_status["finished_at"] = datetime.now().isoformat()
         _pipeline_lock.release()
+
+
+def _schedule_retry(run_date):
+    """安排一次性重试任务（使用 threading.Timer）"""
+    delay_seconds = (run_date - datetime.now()).total_seconds()
+    if delay_seconds < 0:
+        delay_seconds = 60
+    timer = threading.Timer(delay_seconds, run_daily_pipeline)
+    timer.daemon = True
+    timer.start()
+    logger.info(f"已安排 {delay_seconds:.0f} 秒后重试")
 
 
 # ---------------------------------------------------------------------------
@@ -397,6 +420,9 @@ def _run_pipeline_inner():
         session.commit()
         logger.info(f"写入 {top_n} 条推荐完成")
 
+        # 数据质量报告
+        _log_data_quality_report(stock_list, session, trade_date)
+
         # --- Phase 5: 回测历史推荐 ---
         _pipeline_status["phase"] = "backfill"
         try:
@@ -420,6 +446,43 @@ def _run_pipeline_inner():
         raise
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# 数据质量报告
+# ---------------------------------------------------------------------------
+
+def _log_data_quality_report(stock_list, session, trade_date):
+    """采集完成后输出数据质量报告"""
+    from sqlalchemy import func, distinct
+
+    total = len(stock_list)
+    if total == 0:
+        return
+    codes = [c for c, _ in stock_list]
+
+    kline_ok = session.query(func.count(distinct(StockDaily.stock_code))).filter(
+        StockDaily.stock_code.in_(codes),
+        StockDaily.trade_date >= trade_date - timedelta(days=3),
+    ).scalar() or 0
+
+    fund_ok = session.query(func.count(distinct(StockFundamental.stock_code))).filter(
+        StockFundamental.stock_code.in_(codes),
+        StockFundamental.pe_ttm != None,
+    ).scalar() or 0
+
+    mf_ok = session.query(func.count(distinct(StockMoneyFlow.stock_code))).filter(
+        StockMoneyFlow.stock_code.in_(codes),
+        StockMoneyFlow.trade_date >= trade_date - timedelta(days=3),
+    ).scalar() or 0
+
+    pct = lambda ok: ok * 100 // total if total else 0
+    logger.info("=== 数据质量报告 ===")
+    logger.info(f"股票池: {total}只")
+    logger.info(f"K线覆盖: {kline_ok}/{total} ({pct(kline_ok)}%)")
+    logger.info(f"基本面(PE有值): {fund_ok}/{total} ({pct(fund_ok)}%)")
+    logger.info(f"资金流覆盖: {mf_ok}/{total} ({pct(mf_ok)}%)")
+    logger.info("===================")
 
 
 # ---------------------------------------------------------------------------

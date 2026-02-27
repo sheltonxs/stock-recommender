@@ -133,6 +133,16 @@ class MarketCollector(BaseCollector):
                 col_map[col] = "换手率"
             elif "市盈率" in col:
                 col_map[col] = "市盈率-动态"
+            elif "市净率" in col:
+                col_map[col] = "市净率"
+            elif col == "总市值" or "总市值" in col:
+                col_map[col] = "总市值"
+            elif col == "流通市值" or "流通市值" in col:
+                col_map[col] = "流通市值"
+            elif col == "成交量" or (col != "成交额" and "成交量" in col):
+                col_map[col] = "成交量"
+            elif "成交额" in col:
+                col_map[col] = "成交额"
 
         if col_map:
             df = df.rename(columns=col_map)

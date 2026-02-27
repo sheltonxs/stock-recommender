@@ -40,6 +40,9 @@ class Settings:
         self.schedule_collect_hour = 15
         self.schedule_collect_minute = 30
 
+        self.pipeline_max_retries = 2
+        self.pipeline_retry_delay_minutes = 30
+
         # 启动时加载用户设置
         self._load_user_settings()
 

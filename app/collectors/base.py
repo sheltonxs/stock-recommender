@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 class BaseCollector:
 
-    CIRCUIT_BREAK_THRESHOLD = 5  # 连续失败N次触发熔断
+    CIRCUIT_BREAK_THRESHOLD = 15  # 连续失败N次触发熔断
 
     def __init__(self, delay: float = 0.4, retry: int = 3):
         self.delay = delay
@@ -72,11 +72,12 @@ class BaseCollector:
                 consecutive_fails += 1
                 logger.error(f"[{code}] {label}采集失败: {e}")
                 if consecutive_fails >= self.CIRCUIT_BREAK_THRESHOLD:
-                    logger.error(
-                        f"连续{consecutive_fails}次失败，触发熔断，"
-                        f"停止{label}采集(已完成{total}条)"
+                    logger.warning(
+                        f"连续{consecutive_fails}次失败，暂停30秒后继续{label}采集"
+                        f"(已完成{total}条)"
                     )
-                    break
+                    time.sleep(30)
+                    consecutive_fails = 0
         logger.info(f"{label}采集完成, 共 {total} 条")
         return total
 

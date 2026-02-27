@@ -98,9 +98,9 @@ def is_trading_time() -> bool:
     # 周末
     if now.weekday() >= 5:
         return False
-    # 交易时段 9:15 - 15:30
+    # 交易时段 9:15 - 16:30 (盘后留1小时窗口给数据采集)
     t = now.hour * 100 + now.minute
-    return 915 <= t <= 1530
+    return 915 <= t <= 1630
 
 
 def get_cache_ttl(trading_ttl: int = 300, non_trading_ttl: int = 1800) -> int:

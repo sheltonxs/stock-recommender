@@ -70,12 +70,24 @@ class FundamentalCollector(BaseCollector):
             stock_code=code
         ).order_by(StockFundamental.report_date.desc()).first()
 
-        if latest:
-            latest.pe_ttm = spot_row.get("市盈率-动态")
-            latest.pb = spot_row.get("市净率")
-            latest.market_cap = (spot_row.get("总市值") or 0) / 1e8
-            latest.float_market_cap = (spot_row.get("流通市值") or 0) / 1e8
-            session.commit()
+        if not latest:
+            latest = StockFundamental(stock_code=code, report_date=date.today())
+            session.add(latest)
+
+        pe_val = self._float(spot_row.get("市盈率-动态"))
+        pb_val = self._float(spot_row.get("市净率"))
+        mcap = self._float(spot_row.get("总市值"))
+        fcap = self._float(spot_row.get("流通市值"))
+
+        if pe_val is not None:
+            latest.pe_ttm = pe_val
+        if pb_val is not None:
+            latest.pb = pb_val
+        if mcap is not None:
+            latest.market_cap = mcap / 1e8
+        if fcap is not None:
+            latest.float_market_cap = fcap / 1e8
+        session.commit()
 
     def collect(self, stock_list: list[tuple[str, str]], session: Session):
         return self._collect_batch(
