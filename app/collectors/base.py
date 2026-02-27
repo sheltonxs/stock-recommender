@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 class BaseCollector:
 
+    CIRCUIT_BREAK_THRESHOLD = 5  # 连续失败N次触发熔断
+
     def __init__(self, delay: float = 0.4, retry: int = 3):
         self.delay = delay
         self.retry = retry
@@ -49,6 +51,34 @@ class BaseCollector:
                     backoff = 3.0 * (2 ** (attempt - 1)) + random.uniform(0, 2)
                     time.sleep(backoff)
         raise last_err
+
+    def _collect_batch(self, stock_list, session, collect_fn, label=""):
+        """批量采集，带熔断机制
+
+        Args:
+            stock_list: [(code, name), ...]
+            session: SQLAlchemy session
+            collect_fn: callable(code, name, session) -> int
+            label: 日志标签
+        """
+        total = 0
+        consecutive_fails = 0
+        for code, name in stock_list:
+            try:
+                n = collect_fn(code, name, session)
+                total += n
+                consecutive_fails = 0
+            except Exception as e:
+                consecutive_fails += 1
+                logger.error(f"[{code}] {label}采集失败: {e}")
+                if consecutive_fails >= self.CIRCUIT_BREAK_THRESHOLD:
+                    logger.error(
+                        f"连续{consecutive_fails}次失败，触发熔断，"
+                        f"停止{label}采集(已完成{total}条)"
+                    )
+                    break
+        logger.info(f"{label}采集完成, 共 {total} 条")
+        return total
 
     def collect(self):
         raise NotImplementedError

@@ -20,6 +20,7 @@ class Settings:
         self.db_url = f"sqlite:///{self.data_dir / 'stock.db'}"
 
         self.stock_pool_size = 100
+        self.pool_multiplier = 2  # 采集池 = 推荐数 × 倍率 = 200
 
         self.weight_technical = float(os.getenv("WEIGHT_TECH", "0.30"))
         self.weight_fundamental = float(os.getenv("WEIGHT_FUND", "0.25"))

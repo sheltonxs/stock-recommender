@@ -166,15 +166,18 @@ class FundamentalAnalyzer:
 
         total = val_score + profit_score + growth_score + health_score
 
-        # ---------- 财报新鲜度惩罚 ----------
+        # ---------- 财报新鲜度惩罚（连续衰减曲线） ----------
         freshness_factor = 1.0
         if report_date is not None:
             months_old = (date.today() - report_date).days / 30.0
-            if months_old > 12:
-                freshness_factor = 0.5
-                signals.append(f"\u26a0\ufe0f 财报已过期{months_old:.0f}个月(5折)")
+            if months_old > 18:
+                freshness_factor = 0.2
+                signals.append(f"\u26a0\ufe0f 财报已过期{months_old:.0f}个月(2折)")
+            elif months_old > 12:
+                freshness_factor = 0.5 - (months_old - 12) * 0.033  # 12个月=50%, 18个月≈30%
+                signals.append(f"\u26a0\ufe0f 财报{months_old:.0f}个月前({freshness_factor:.0%})")
             elif months_old > 6:
-                freshness_factor = 1.0 - (months_old - 6) / 12.0  # 6个月=1.0, 12个月=0.5
+                freshness_factor = 0.8 - (months_old - 6) * 0.05  # 6个月=80%, 12个月=50%
                 signals.append(f"\u26a0\ufe0f 财报{months_old:.0f}个月前({freshness_factor:.0%})")
             total = round(total * freshness_factor)
 

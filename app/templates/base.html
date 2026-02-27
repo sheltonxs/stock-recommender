@@ -340,20 +340,61 @@
     .back-link:hover { color: var(--text-primary); }
     .back-link svg { width: 16px; height: 16px; }
 
+    /* ===== Hamburger Menu ===== */
+    .navbar__hamburger {
+      display: none; background: none; border: none;
+      color: var(--text-secondary); cursor: pointer; padding: 8px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .navbar__hamburger svg { width: 22px; height: 22px; }
+
     /* ===== Responsive ===== */
     @media (max-width: 1024px) {
       .grid-4 { grid-template-columns: repeat(2, 1fr); }
       .grid-3 { grid-template-columns: 1fr 1fr; }
     }
     @media (max-width: 768px) {
-      .main { padding: 68px 16px 52px; }
-      .navbar__nav { display: none; }
-      .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 10px; }
-      .grid-2 { grid-template-columns: 1fr; }
-      .grid-3 { grid-template-columns: 1fr; }
-      .index-card__price { font-size: 22px; }
-      .rec-table { font-size: 13px; }
-      .rec-table td { padding: 10px 8px; }
+      .main { padding: 68px 12px 52px; }
+      .navbar { padding: 0 12px; }
+      .navbar__hamburger { display: block; }
+      .navbar__nav {
+        display: none; position: fixed; top: 56px; left: 0; right: 0;
+        background: var(--bg-card); border-bottom: 1px solid var(--border-subtle);
+        flex-direction: column; padding: 8px; z-index: 49;
+        box-shadow: var(--shadow-lg);
+      }
+      .navbar__nav.open { display: flex; }
+      .navbar__nav .navbar__link { padding: 12px 16px; font-size: 15px; }
+      .navbar__search { display: none !important; }
+      .navbar__right { margin-left: auto; gap: 8px; }
+      .navbar__date { display: none; }
+      .navbar__status { display: none; }
+      .navbar__refresh-btn span { display: none; }
+      .navbar__refresh-btn { padding: 5px 10px; min-width: 36px; justify-content: center; }
+      .grid-4 { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+      .grid-2, .grid-3 { grid-template-columns: 1fr; gap: 12px; }
+      .index-card__price { font-size: 20px; }
+      .index-card__change { font-size: 13px; }
+      .card { padding: 14px; }
+      .card__title { font-size: 13px; }
+      .section { margin-bottom: 16px; }
+      .rec-table { font-size: 12px; }
+      .rec-table th { font-size: 11px; padding: 8px 6px; }
+      .rec-table td { padding: 10px 6px; }
+      .rec-table .rank-cell { font-size: 13px; width: 30px; }
+      .btn { padding: 8px 14px; font-size: 13px; }
+      .tabs { gap: 1px; }
+      .tab-btn { padding: 5px 10px; font-size: 12px; }
+      .disclaimer__text { font-size: 11px; }
+    }
+    @media (max-width: 480px) {
+      .main { padding: 64px 8px 44px; }
+      .grid-4 { grid-template-columns: 1fr 1fr; gap: 6px; }
+      .index-card { padding: 10px 12px; }
+      .index-card__price { font-size: 18px; }
+      .index-card__name { font-size: 12px; }
+      .section__title { font-size: 14px; }
+      .card { padding: 12px; border-radius: var(--radius-md); }
     }
 
     {% block extra_style %}{% endblock %}
@@ -366,6 +407,9 @@
       <i data-lucide="bar-chart-2"></i>
       A股智选
     </a>
+    <button class="navbar__hamburger" id="navHamburger" aria-label="菜单">
+      <i data-lucide="menu"></i>
+    </button>
     <div class="navbar__nav">
       <a href="/" class="navbar__link {% block nav_dashboard %}{% endblock %}">看板</a>
       <a href="/history" class="navbar__link {% block nav_history %}{% endblock %}">历史</a>
@@ -407,6 +451,25 @@
 
   <script>
     lucide.createIcons();
+
+    /* ===== Hamburger Menu Toggle ===== */
+    (function(){
+      var hamburger = document.getElementById('navHamburger');
+      var nav = document.querySelector('.navbar__nav');
+      if (hamburger && nav) {
+        hamburger.addEventListener('click', function() {
+          nav.classList.toggle('open');
+          var icon = hamburger.querySelector('[data-lucide]');
+          if (icon) {
+            icon.setAttribute('data-lucide', nav.classList.contains('open') ? 'x' : 'menu');
+            lucide.createIcons();
+          }
+        });
+        document.querySelectorAll('.navbar__nav .navbar__link').forEach(function(link) {
+          link.addEventListener('click', function() { nav.classList.remove('open'); });
+        });
+      }
+    })();
 
     /* ===== Pipeline Refresh ===== */
     (function(){

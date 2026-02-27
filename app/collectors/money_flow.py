@@ -53,12 +53,8 @@ class MoneyFlowCollector(BaseCollector):
         return count
 
     def collect(self, stock_list: list[tuple[str, str]], session: Session):
-        total = 0
-        for code, name in stock_list:
-            try:
-                n = self.collect_one(code, session)
-                total += n
-            except Exception as e:
-                logger.error(f"[{code}] 资金流采集失败: {e}")
-        logger.info(f"资金流采集完成, 共 {total} 条")
-        return total
+        return self._collect_batch(
+            stock_list, session,
+            lambda code, name, sess: self.collect_one(code, sess),
+            label="资金流",
+        )

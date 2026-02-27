@@ -13,6 +13,15 @@ logger = logging.getLogger(__name__)
 
 class FundamentalCollector(BaseCollector):
 
+    @staticmethod
+    def _float(val):
+        if val is None:
+            return None
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None
+
     def _map_financial_row(self, code: str, row: dict) -> dict:
         report_str = str(row.get("日期", ""))
         try:
@@ -20,14 +29,20 @@ class FundamentalCollector(BaseCollector):
         except (ValueError, TypeError):
             report_date = date.today()
 
+        _f = self._float
+        revenue_yoy = _f(row.get("营业总收入同比增长率(%)")) or _f(row.get("营业收入同比增长率(%)"))
+        profit_yoy = _f(row.get("净利润同比增长率(%)")) or _f(row.get("归属净利润同比增长率(%)"))
+
         return {
             "stock_code": code,
             "report_date": report_date,
-            "roe": row.get("净资产收益率(%)"),
-            "gross_margin": row.get("主营业务利润率(%)"),
-            "net_margin": row.get("销售净利率(%)"),
-            "debt_ratio": row.get("资产负债率(%)"),
-            "current_ratio": row.get("流动比率"),
+            "roe": _f(row.get("加权净资产收益率(%)")) or _f(row.get("净资产收益率(%)")),
+            "gross_margin": _f(row.get("主营业务利润率(%)")),
+            "net_margin": _f(row.get("销售净利率(%)")),
+            "debt_ratio": _f(row.get("资产负债率(%)")),
+            "current_ratio": _f(row.get("流动比率")),
+            "revenue_yoy": revenue_yoy,
+            "profit_yoy": profit_yoy,
         }
 
     def collect_one(self, code: str, session: Session) -> int:
@@ -63,12 +78,76 @@ class FundamentalCollector(BaseCollector):
             session.commit()
 
     def collect(self, stock_list: list[tuple[str, str]], session: Session):
-        total = 0
+        return self._collect_batch(
+            stock_list, session,
+            lambda code, name, sess: self.collect_one(code, sess),
+            label="财务",
+        )
+
+    def enrich_pe_pb(self, stock_list: list[tuple[str, str]], session: Session):
+        """批量补全缺失的 PE_TTM 和 PB（从 EPS/BVPS + 收盘价计算）"""
+        from app.models.database import StockDaily
+        enriched = 0
+        skipped = 0
         for code, name in stock_list:
             try:
-                n = self.collect_one(code, session)
-                total += n
+                latest = session.query(StockFundamental).filter_by(
+                    stock_code=code
+                ).order_by(StockFundamental.report_date.desc()).first()
+                if not latest:
+                    continue
+                if latest.pe_ttm is not None and latest.pb is not None:
+                    skipped += 1
+                    continue
+
+                # 获取最新收盘价
+                latest_daily = session.query(StockDaily).filter_by(
+                    stock_code=code
+                ).order_by(StockDaily.trade_date.desc()).first()
+                if not latest_daily or not latest_daily.close:
+                    continue
+                close = float(latest_daily.close)
+
+                # 获取财务指标数据（EPS、每股净资产）
+                df = self._call_ak("stock_financial_analysis_indicator",
+                                   symbol=code, start_year="2024")
+                if df is None or df.empty:
+                    continue
+
+                row = df.iloc[0].to_dict()
+                changed = False
+
+                # PE_TTM = 收盘价 / 每股收益
+                if latest.pe_ttm is None:
+                    for key in ("摊薄每股收益(元)", "加权每股收益(元)", "每股收益_调整后(元)"):
+                        eps = row.get(key)
+                        if eps is not None:
+                            try:
+                                eps_val = float(eps)
+                                if eps_val > 0:
+                                    latest.pe_ttm = round(close / eps_val, 2)
+                                    changed = True
+                                    break
+                            except (ValueError, TypeError):
+                                pass
+
+                # PB = 收盘价 / 每股净资产
+                if latest.pb is None:
+                    for key in ("每股净资产_调整后(元)", "每股净资产_调整前(元)"):
+                        bvps = row.get(key)
+                        if bvps is not None:
+                            try:
+                                bvps_val = float(bvps)
+                                if bvps_val > 0:
+                                    latest.pb = round(close / bvps_val, 2)
+                                    changed = True
+                                    break
+                            except (ValueError, TypeError):
+                                pass
+
+                if changed:
+                    session.commit()
+                    enriched += 1
             except Exception as e:
-                logger.error(f"[{code}] 财务采集失败: {e}")
-        logger.info(f"财务采集完成, 共 {total} 条")
-        return total
+                logger.debug(f"[{code}] PE/PB补全失败: {e}")
+        logger.info(f"PE/PB补全完成: 补全{enriched}只, 跳过{skipped}只(已有数据)")

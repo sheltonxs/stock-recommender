@@ -32,6 +32,20 @@
   }
   .chart-card__title svg { width: 16px; height: 16px; opacity: 0.6; }
   .status-cell { text-align: center; }
+
+  /* ===== History Mobile ===== */
+  @media (max-width: 768px) {
+    #winRateChart { height: 260px !important; }
+    #scoreDistChart { height: 240px !important; }
+    .metric-card__value { font-size: 22px; }
+    .metric-card { padding: 14px 16px; }
+  }
+  @media (max-width: 480px) {
+    .metric-card__value { font-size: 20px; }
+    .metric-card__label { font-size: 12px; }
+    #winRateChart { height: 220px !important; }
+    #scoreDistChart { height: 200px !important; }
+  }
 </style>
 {% endblock %}
 

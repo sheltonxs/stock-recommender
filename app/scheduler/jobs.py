@@ -110,14 +110,20 @@ def _run_pipeline_inner():
             snapshot_df = pd.DataFrame()
 
         pool = _filter_stock_pool(snapshot_df)
+
+        # 快速预排序: 成交额大、涨幅接近2%的优先进入采集池
+        pool.sort(key=lambda r: (
+            -min(r.get("amount", 0), 1e10),
+            abs(r.get("change_pct", 0) - 2),
+        ))
+
+        # 始终截断到 pool_multiplier 倍 (默认200只)
+        max_pool = settings.stock_pool_size * settings.pool_multiplier
+        if len(pool) > max_pool:
+            logger.info(f"股票池 {len(pool)} 只，截断至 {max_pool}")
+            pool = pool[:max_pool]
+
         stock_list = [(r["code"], r["name"]) for r in pool]
-
-        # 夜间模式: comment_em 缺少总市值列，池子过大时截断
-        if nighttime and len(stock_list) > settings.stock_pool_size * 5:
-            max_pool = settings.stock_pool_size * 5  # 500
-            logger.info(f"夜间模式: 股票池 {len(stock_list)} 只，截断至 {max_pool}")
-            stock_list = stock_list[:max_pool]
-
         logger.info(f"过滤后股票池: {len(stock_list)} 只")
         _pipeline_status["progress"] = f"股票池 {len(stock_list)} 只"
 
@@ -139,43 +145,58 @@ def _run_pipeline_inner():
         _pipeline_status["phase"] = "collecting"
         logger.info("[2/4] 数据采集...")
 
+        fc = FundamentalCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
+
         if nighttime:
-            logger.info("夜间模式: 跳过所有数据采集(push2/push2his夜间不可用)，使用历史数据评分")
+            # 夜间: 东方财富所有API不稳定，跳过全部采集，使用历史数据评分
+            logger.info("夜间模式: 跳过数据采集(东方财富API夜间不稳定)，使用历史数据评分")
+            sentiment_data = {"sector_flow": pd.DataFrame(), "boards": pd.DataFrame(),
+                              "zt_pool": pd.DataFrame(), "north_flow": pd.DataFrame()}
         else:
+            # 盘中/盘后: 运行所有采集器
+            # K线采集
             try:
                 mc.collect(stock_list, session)
             except Exception as e:
                 logger.error(f"K线采集异常(继续执行): {e}")
 
-            fc = FundamentalCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
+            # 基本面采集
             try:
                 fc.collect(stock_list, session)
             except Exception as e:
                 logger.error(f"基本面采集异常(继续执行): {e}")
 
+            # 资金流采集
             mfc = MoneyFlowCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
             try:
                 mfc.collect(stock_list, session)
             except Exception as e:
                 logger.error(f"资金流采集异常(继续执行): {e}")
 
-        sc = SentimentCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
-        sentiment_data = {"sector_flow": pd.DataFrame(), "boards": pd.DataFrame(),
-                          "zt_pool": pd.DataFrame(), "north_flow": pd.DataFrame()}
-        try:
-            sentiment_data = sc.collect()
-        except Exception as e:
-            logger.error(f"情绪数据采集异常(使用空数据继续): {e}")
+            # 情绪数据采集
+            sc = SentimentCollector(delay=settings.akshare_delay, retry=settings.akshare_retry)
+            sentiment_data = {"sector_flow": pd.DataFrame(), "boards": pd.DataFrame(),
+                              "zt_pool": pd.DataFrame(), "north_flow": pd.DataFrame()}
+            try:
+                sentiment_data = sc.collect()
+            except Exception as e:
+                logger.error(f"情绪数据采集异常(使用空数据继续): {e}")
 
-        # Enrich fundamentals with spot data
-        if snapshot_df is not None and not snapshot_df.empty:
-            for code, name in stock_list[:50]:
-                try:
-                    spot_row = snapshot_df[snapshot_df["代码"] == code]
-                    if not spot_row.empty:
-                        fc.enrich_from_spot(code, spot_row.iloc[0].to_dict(), session)
-                except Exception:
-                    pass
+            # Enrich fundamentals with spot data
+            if snapshot_df is not None and not snapshot_df.empty:
+                for code, name in stock_list:
+                    try:
+                        spot_row = snapshot_df[snapshot_df["代码"] == code]
+                        if not spot_row.empty:
+                            fc.enrich_from_spot(code, spot_row.iloc[0].to_dict(), session)
+                    except Exception:
+                        pass
+
+            # PE/PB 补全 (仅对缺失记录)
+            try:
+                fc.enrich_pe_pb(stock_list, session)
+            except Exception as e:
+                logger.error(f"PE/PB补全异常(继续执行): {e}")
 
         # --- Phase 3: 评分 ---
         _pipeline_status["phase"] = "scoring"
@@ -539,7 +560,7 @@ def _build_pool_from_db(session: Session) -> list[tuple]:
         if r.close and r.close > 0 and "ST" not in (r.stock_name or ""):
             result.append((r.stock_code, r.stock_name or ""))
 
-    max_size = settings.stock_pool_size * 5
+    max_size = settings.stock_pool_size * settings.pool_multiplier
     logger.info(f"数据库降级: 最近交易日 {latest_date}, 共 {len(rows)} 条, 过滤后 {len(result[:max_size])} 只")
     return result[:max_size]
 
@@ -567,8 +588,19 @@ def _filter_stock_pool(df) -> list[dict]:
             pd.to_numeric(filtered["涨跌幅"], errors="coerce").abs() < settings.filter_max_change_pct
         ]
 
-    return [{"code": str(r["代码"]), "name": str(r["名称"])}
-            for _, r in filtered.iterrows()]
+    result = []
+    for _, r in filtered.iterrows():
+        item = {"code": str(r["代码"]), "name": str(r["名称"])}
+        try:
+            item["amount"] = float(r.get("成交额", 0) or 0)
+        except (ValueError, TypeError):
+            item["amount"] = 0
+        try:
+            item["change_pct"] = float(r.get("涨跌幅", 0) or 0)
+        except (ValueError, TypeError):
+            item["change_pct"] = 0
+        result.append(item)
+    return result
 
 
 def _get_industry(code: str, snapshot_df) -> str:
@@ -580,11 +612,22 @@ def _get_industry(code: str, snapshot_df) -> str:
 
 def _build_analysis_text(r: dict) -> str:
     """Build analysis text from composite result"""
+    total = r["total_score"]
     bullish = r.get("signals_bullish", [])
     bearish = r.get("signals_bearish", [])
-    lines = [f"【综合评分 {r['total_score']}/100 - {r.get('advice', '')}】"]
+
+    lines = [f"【综合评分 {total}/100】"]
+
+    if total >= 70:
+        lines.append("多因子共振偏多，适合关注。")
+    elif total >= 55:
+        lines.append("信号中性偏多，可轻仓试探。")
+    else:
+        lines.append("暂无明确方向，建议观望。")
+
     if bullish:
-        lines.append("看多信号: " + ", ".join(bullish[:5]))
+        lines.append("利多: " + "、".join(bullish[:3]))
     if bearish:
-        lines.append("风险提示: " + ", ".join(bearish[:3]))
+        lines.append("风险: " + "、".join(bearish[:2]))
+
     return "\n".join(lines)

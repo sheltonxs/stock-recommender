@@ -179,10 +179,47 @@ def _build_market_indices() -> list[dict]:
 
 
 def _build_sectors_uncached() -> list[dict]:
-    """从 AKShare 获取板块数据（不缓存）"""
+    """从 AKShare 获取板块数据，失败时使用文件缓存"""
+    BOARD_CACHE = Path(__file__).resolve().parent.parent / "data" / "board_cache.json"
+    EMPTY = [{"name": "暂无数据", "value": 0, "change_pct": 0, "amount": 0, "leader": ""}]
+
+    # Tier 1: 实时 API
+    df = None
+    from_api = False
     try:
         import akshare as ak
         df = ak.stock_board_industry_name_em()
+        if df is not None and not df.empty:
+            from_api = True
+    except Exception as e:
+        logger.warning(f"板块API失败: {e}")
+
+    # Tier 2: 文件缓存
+    if df is None or df.empty:
+        try:
+            if BOARD_CACHE.exists():
+                cache = json.loads(BOARD_CACHE.read_text())
+                df = pd.DataFrame(cache["data"])
+                logger.info(f"板块热力图使用缓存 ({cache.get('date', 'unknown')})")
+        except Exception as e:
+            logger.warning(f"板块缓存加载失败: {e}")
+
+    if df is None or df.empty:
+        return EMPTY
+
+    # API 成功时保存完整数据到缓存（在过滤前）
+    if from_api:
+        try:
+            BOARD_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            cache_data = {
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "data": df.to_dict(orient="records"),
+            }
+            BOARD_CACHE.write_text(json.dumps(cache_data, ensure_ascii=False, default=str))
+        except Exception:
+            pass
+
+    try:
         df = df[~df["板块名称"].str.contains("Ⅱ|Ⅲ", na=False)]
         df = df.sort_values("总市值", ascending=False).head(20)
         sectors = []
@@ -196,10 +233,10 @@ def _build_sectors_uncached() -> list[dict]:
                 "amount": round(mkt_cap, 0),
                 "leader": str(row.get("领涨股票", "") or ""),
             })
-        return sectors if sectors else [{"name": "暂无数据", "value": 0, "change_pct": 0, "amount": 0, "leader": ""}]
+        return sectors if sectors else EMPTY
     except Exception as e:
-        logger.warning(f"板块数据获取失败: {e}")
-        return [{"name": "暂无数据", "value": 0, "change_pct": 0, "amount": 0, "leader": ""}]
+        logger.warning(f"板块数据解析失败: {e}")
+        return EMPTY
 
 
 def _build_sectors() -> list[dict]:
@@ -378,6 +415,95 @@ def _build_money_flow(code: str, session: Session) -> list[dict]:
     } for r in rows]
 
 
+def _build_smart_advice(rec, tech_row, fund_row, kline_rows) -> dict:
+    """基于个股数据生成具体操作建议
+
+    同时参考绝对分数和相对排名(rank)，避免数据不完整时所有股票都显示"偏空"。
+    """
+    total = rec.total_score or 0
+    close = rec.close_price or 0
+    rank = rec.rank or 100
+
+    # --- 止损价: 基于 MA20 或近期低点 ---
+    if tech_row and tech_row.ma20 and close > 0 and tech_row.ma20 * 0.95 <= close <= tech_row.ma20 * 1.10:
+        stop_price = round(tech_row.ma20 * 0.98, 2)
+        stop_pct = round((stop_price - close) / close * 100, 1)
+        stop_loss = f"参考止损 {stop_price} 元 (MA20下方2%, 距当前{stop_pct}%)"
+    elif kline_rows:
+        recent = kline_rows[-20:] if len(kline_rows) >= 20 else kline_rows
+        recent_low = min(r.low for r in recent if r.low)
+        stop_price = round(recent_low * 0.98, 2)
+        stop_loss = f"参考止损 {stop_price} 元 (近20日低点下方)"
+    else:
+        stop_loss = "暂无数据"
+
+    # --- 买入区间: 基于 MA 支撑 ---
+    if tech_row and tech_row.ma10:
+        buy_low = round(tech_row.ma10 * 0.99, 2)
+        buy_high = round((tech_row.ma5 * 1.01) if tech_row.ma5 else (close * 1.01), 2)
+        buy_zone = f"{buy_low} - {buy_high} 元"
+    elif close > 0:
+        buy_zone = f"{round(close * 0.98, 2)} - {round(close * 1.02, 2)} 元"
+    else:
+        buy_zone = "暂无数据"
+
+    # --- 利润目标: 基于 BOLL 上轨或近期高点 ---
+    if tech_row and tech_row.boll_upper and close > 0 and tech_row.boll_upper > close:
+        target_price = round(tech_row.boll_upper, 2)
+        target_pct = round((target_price - close) / close * 100, 1)
+        target = f"短线目标 {target_price} 元 (BOLL上轨, +{target_pct}%)"
+    elif kline_rows and close > 0:
+        recent = kline_rows[-20:] if len(kline_rows) >= 20 else kline_rows
+        recent_high = max(r.high for r in recent if r.high)
+        target_pct = round((recent_high - close) / close * 100, 1)
+        target = f"关注前高 {round(recent_high, 2)} 元 ({'+' if target_pct > 0 else ''}{target_pct}%)"
+    else:
+        target = "关注前高压力位"
+
+    # --- 仓位 & 建议: 结合绝对分数 + 相对排名 ---
+    # 绝对分数优先；但当数据不完整导致分数普遍偏低时，排名作为补充信号
+    if total >= 80:
+        position = "可配置 5%-8% 仓位"
+    elif total >= 70 or (total >= 50 and rank <= 5):
+        position = "可配置 3%-5% 仓位"
+    elif total >= 55 or (total >= 40 and rank <= 20):
+        position = "轻仓试探 1%-3%"
+    elif rank <= 30:
+        position = "轻仓试探 1%-2%"
+    else:
+        position = "暂不建仓，观望为主"
+
+    lines = []
+    tech_score = rec.technical_score or 0
+
+    if total >= 70:
+        lines.append(f"综合评分{total:.0f}分，多因子共振偏多。")
+        if tech_row and tech_row.ma5 and tech_row.ma10 and tech_row.ma5 > tech_row.ma10:
+            lines.append("短期均线多头排列，趋势向上。")
+        if fund_row and fund_row.pe_ttm and 0 < fund_row.pe_ttm < 20:
+            lines.append(f"PE(TTM)={fund_row.pe_ttm:.1f}，估值处于低位区间。")
+        lines.append(f"建议在 {buy_zone} 区间分批建仓，{position}。")
+    elif total >= 55 or (rank <= 10 and tech_score >= 60):
+        lines.append(f"综合评分{total:.0f}分(排名第{rank})，信号中性偏多。")
+        if tech_score >= 65:
+            lines.append("技术面表现较好，关注趋势延续性。")
+        lines.append(f"可在 {buy_zone} 附近轻仓试探，严格止损。")
+    elif rank <= 30 and tech_score >= 50:
+        lines.append(f"综合评分{total:.0f}分(排名第{rank})，技术面{tech_score:.0f}分尚可。")
+        lines.append(f"可关注 {buy_zone} 区间，轻仓操作需严守止损纪律。")
+    else:
+        lines.append(f"综合评分{total:.0f}分，暂无明确多头信号。")
+        lines.append("建议观望，等待趋势确认后再考虑介入。")
+
+    return {
+        "text": "".join(lines),
+        "stop_loss": stop_loss,
+        "buy_zone": buy_zone,
+        "target": target,
+        "position": position,
+    }
+
+
 def _build_analysis(code: str, session: Session) -> dict:
     rec = session.query(DailyRecommendation).filter_by(
         stock_code=code
@@ -389,6 +515,9 @@ def _build_analysis(code: str, session: Session) -> dict:
             "sections": [],
             "advice": "暂无数据",
             "stop_loss": "暂无数据",
+            "buy_zone": "暂无数据",
+            "target": "暂无数据",
+            "position": "暂无数据",
         }
 
     sigs = json.loads(rec.signals_json) if rec.signals_json else {"bullish": [], "bearish": []}
@@ -427,11 +556,29 @@ def _build_analysis(code: str, session: Session) -> dict:
     else:
         summary = "偏空"
 
+    # 获取技术指标和基本面数据
+    tech_row = session.query(StockTechnical).filter_by(
+        stock_code=code
+    ).order_by(StockTechnical.trade_date.desc()).first()
+
+    fund_row = session.query(StockFundamental).filter_by(
+        stock_code=code
+    ).order_by(StockFundamental.report_date.desc()).first()
+
+    kline_rows = session.query(StockDaily).filter_by(
+        stock_code=code
+    ).order_by(StockDaily.trade_date).all()
+
+    advice = _build_smart_advice(rec, tech_row, fund_row, kline_rows)
+
     return {
         "technical_summary": summary,
         "sections": sections,
-        "advice": "偏多操作，可关注回踩均线附近买入机会" if total >= 60 else "短线观望为主，等待方向确认",
-        "stop_loss": "跌破MA20考虑止损" if total >= 50 else "跌破前低止损",
+        "advice": advice["text"],
+        "stop_loss": advice["stop_loss"],
+        "buy_zone": advice["buy_zone"],
+        "target": advice["target"],
+        "position": advice["position"],
     }
 
 

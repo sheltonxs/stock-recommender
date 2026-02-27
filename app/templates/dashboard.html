@@ -103,6 +103,30 @@
     color: var(--text-muted);
     margin: 0 8px;
   }
+
+  /* ===== Dashboard Mobile ===== */
+  @media (max-width: 768px) {
+    .gauge-wrap { gap: 20px; }
+    .gauge-chart { width: 160px; height: 160px; }
+    .sentiment-stats { gap: 8px 20px; }
+    .sentiment-stat-row__val { font-size: 16px; }
+    .filter-toolbar { padding: 12px; gap: 8px; }
+    .filter-label { font-size: 11px; }
+    .filter-select, .filter-input-sm { font-size: 12px; padding: 5px 8px; }
+    .filter-results { margin-left: 0; width: 100%; text-align: right; }
+    .signals-cell { max-width: 200px; }
+    .tier-header { padding: 10px 14px 6px; }
+    #heatmapChart, #sankeyChart { height: 280px !important; }
+    #distChart { height: 220px !important; }
+  }
+  @media (max-width: 480px) {
+    .gauge-chart { width: 140px; height: 140px; }
+    .sentiment-stats { grid-template-columns: repeat(2, auto); gap: 6px 16px; }
+    .filter-toolbar { flex-direction: column; align-items: stretch; }
+    .filter-results { text-align: left; }
+    #heatmapChart, #sankeyChart { height: 240px !important; }
+    #distChart { height: 200px !important; }
+  }
 </style>
 {% endblock %}
 

@@ -61,6 +61,23 @@
   }
   .advice-box__label { font: 600 13px var(--font-ui); color: var(--color-primary); margin-bottom: 4px; }
   .advice-box__text { font: 400 14px var(--font-ui); color: var(--text-primary); line-height: 1.6; }
+  .advice-details {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-top: 12px; padding-top: 12px;
+    border-top: 1px solid rgba(59,130,246,0.12);
+  }
+  .advice-item {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 8px 10px; border-radius: var(--radius-sm);
+    background: rgba(255,255,255,0.03);
+  }
+  .advice-item__label { font: 500 11px var(--font-ui); color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .advice-item__value { font: 600 13px var(--font-data); color: var(--text-primary); }
+  .advice-item__value.danger { color: var(--color-down); }
+  .advice-item__value.success { color: var(--color-up); }
+  @media (max-width: 768px) {
+    .advice-details { grid-template-columns: 1fr; }
+  }
 
   /* ===== Fundamental Table ===== */
   .fund-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
@@ -95,6 +112,30 @@
     .score-overview { gap: 8px; }
     .score-item { min-width: 80px; padding: 10px; }
     .score-item__value { font-size: 18px; }
+  }
+
+  /* ===== Detail Mobile Enhanced ===== */
+  @media (max-width: 768px) {
+    #klineChart { height: 320px !important; }
+    #subChart { height: 180px !important; }
+    #radarChart { height: 240px !important; }
+    #flowChart { height: 220px !important; }
+    .chart-tabs { position: static !important; margin-top: 8px; }
+    .analysis-item { font-size: 13px; }
+    .advice-box { padding: 12px 14px; }
+  }
+  @media (max-width: 480px) {
+    .stock-header__name { font-size: 22px; }
+    .stock-header__price { font-size: 24px; }
+    .stock-header__change { font-size: 15px; }
+    .score-item { min-width: 60px; padding: 8px; }
+    .score-item__value { font-size: 16px; }
+    .score-item__label { font-size: 11px; }
+    .fund-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+    .fund-item { padding: 8px 10px; }
+    .fund-item__value { font-size: 16px; }
+    #klineChart { height: 280px !important; }
+    #subChart { height: 160px !important; }
   }
 </style>
 {% endblock %}
@@ -195,7 +236,25 @@
         {% endfor %}
         <div class="advice-box">
           <div class="advice-box__label">操作建议</div>
-          <div class="advice-box__text">{{ analysis.advice }}<br>止损参考: {{ analysis.stop_loss }}</div>
+          <div class="advice-box__text">{{ analysis.advice }}</div>
+          <div class="advice-details">
+            <div class="advice-item">
+              <span class="advice-item__label">买入区间</span>
+              <span class="advice-item__value">{{ analysis.buy_zone }}</span>
+            </div>
+            <div class="advice-item">
+              <span class="advice-item__label">止损参考</span>
+              <span class="advice-item__value danger">{{ analysis.stop_loss }}</span>
+            </div>
+            <div class="advice-item">
+              <span class="advice-item__label">利润目标</span>
+              <span class="advice-item__value success">{{ analysis.target }}</span>
+            </div>
+            <div class="advice-item">
+              <span class="advice-item__label">仓位建议</span>
+              <span class="advice-item__value">{{ analysis.position }}</span>
+            </div>
+          </div>
         </div>
       {% endif %}
     </div>

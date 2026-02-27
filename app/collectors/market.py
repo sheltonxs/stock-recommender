@@ -178,12 +178,8 @@ class MarketCollector(BaseCollector):
         return df if df is not None else pd.DataFrame()
 
     def collect(self, stock_list: list[tuple[str, str]], session: Session):
-        total = 0
-        for code, name in stock_list:
-            try:
-                n = self.collect_kline(code, name, session)
-                total += n
-            except Exception as e:
-                logger.error(f"[{code}] K线采集失败: {e}")
-        logger.info(f"K线采集完成, 共新增 {total} 条")
-        return total
+        return self._collect_batch(
+            stock_list, session,
+            lambda code, name, sess: self.collect_kline(code, name, sess),
+            label="K线",
+        )
