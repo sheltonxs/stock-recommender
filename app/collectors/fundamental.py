@@ -89,6 +89,7 @@ class FundamentalCollector(BaseCollector):
         from app.models.database import StockDaily
         enriched = 0
         skipped = 0
+        consecutive_fails = 0
         for code, name in stock_list:
             try:
                 latest = session.query(StockFundamental).filter_by(
@@ -112,8 +113,13 @@ class FundamentalCollector(BaseCollector):
                 df = self._call_ak("stock_financial_analysis_indicator",
                                    symbol=code, start_year="2024")
                 if df is None or df.empty:
+                    consecutive_fails += 1
+                    if consecutive_fails >= self.CIRCUIT_BREAK_THRESHOLD:
+                        logger.error(f"PE/PB补全连续{consecutive_fails}次失败，触发熔断")
+                        break
                     continue
 
+                consecutive_fails = 0
                 row = df.iloc[0].to_dict()
                 changed = False
 
@@ -149,5 +155,9 @@ class FundamentalCollector(BaseCollector):
                     session.commit()
                     enriched += 1
             except Exception as e:
+                consecutive_fails += 1
                 logger.debug(f"[{code}] PE/PB补全失败: {e}")
+                if consecutive_fails >= self.CIRCUIT_BREAK_THRESHOLD:
+                    logger.error(f"PE/PB补全连续{consecutive_fails}次失败，触发熔断")
+                    break
         logger.info(f"PE/PB补全完成: 补全{enriched}只, 跳过{skipped}只(已有数据)")
